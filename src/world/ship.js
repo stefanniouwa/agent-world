@@ -42,6 +42,21 @@ export class Ship {
     this._buildLights()
 
     this.traffic = 0 // ramps glow brighter while astronauts are using them
+    /** A dark ship has its lights off and ignores the ramp: nobody is home on that machine. */
+    this.live = true
+  }
+
+  setLive(live) {
+    this.live = Boolean(live)
+    if (!this.live) this.traffic = 0
+    // Powered down reads as a shade greyer as well as unlit, so it shows by day too.
+    this.hull.material.color.setScalar(this.live ? 1 : 0.62)
+  }
+
+  /** Move the lander to a new spot, turned so its ramp faces the middle of the colony. */
+  placeAt(position) {
+    this.group.position.copy(position)
+    this.group.rotation.y = Math.atan2(-position.x, -position.z)
   }
 
   _buildHull() {
@@ -273,6 +288,13 @@ export class Ship {
   }
 
   update(dt, elapsed, night) {
+    if (!this.live) {
+      this.beaconMaterial.color.setRGB(0.05, 0.02, 0.02)
+      this.padMaterial.color.setRGB(0.04, 0.05, 0.06)
+      this.glassMaterial.color.setRGB(0.06, 0.08, 0.1)
+      this.stripMaterial.color.setRGB(0.12, 0.06, 0.05)
+      return
+    }
     // Beacon: a double-blink, like a real aircraft strobe.
     const t = elapsed % 2
     const strobe = t < 0.08 || (t > 0.2 && t < 0.28) ? 1 : 0.08
@@ -292,6 +314,7 @@ export class Ship {
 
   /** Called when an astronaut uses the ramp, so the lights react. */
   ping() {
+    if (!this.live) return
     this.traffic = Math.min(2.5, this.traffic + 1)
   }
 

@@ -553,8 +553,9 @@ export class Astronauts {
   }
 
   _spawnAgent(entry, walksOut = true) {
-    const door = this.world?.shipDoor?.() || new THREE.Vector3(0, 0, 0)
-    const airlock = this.world?.shipAirlock?.() || door
+    // Its own ship: with one lander per machine, the thread says which.
+    const door = this.world?.shipDoor?.(entry.thread) || new THREE.Vector3(0, 0, 0)
+    const airlock = this.world?.shipAirlock?.(entry.thread) || door
     const jitter = () => (Math.random() - 0.5) * 1.4
     // Out of the airlock and down the ramp, or straight onto its plot, a pace off the exact
     // spot so a zone's crew does not appear in a stack. The nav grid sorts out anything
@@ -711,8 +712,8 @@ export class Astronauts {
   }
 
   /** Close enough to the ramp that standing still there is in somebody's way. */
-  _nearDoor(pos) {
-    const door = this.world?.shipDoor?.()
+  _nearDoor(pos, thread) {
+    const door = this.world?.shipDoor?.(thread)
     if (!door) return false
     const dx = pos.x - door.x
     const dz = pos.z - door.z
@@ -739,7 +740,7 @@ export class Astronauts {
     agent.loop = null
     agent.faceFrame = FACE.wink
     agent.pathVersion = -1
-    const door = this.world?.shipDoor?.()
+    const door = this.world?.shipDoor?.(agent.thread)
     if (door) agent.site.copy(door)
   }
 
@@ -806,8 +807,8 @@ export class Astronauts {
     agent.clipTime = 0
     agent.pathVersion = -1
     // Out of the airlock as it stands now — the ship may have moved since the roster.
-    const airlock = this.world?.shipAirlock?.()
-    const door = this.world?.shipDoor?.()
+    const airlock = this.world?.shipAirlock?.(agent.thread)
+    const door = this.world?.shipDoor?.(agent.thread)
     if (airlock && door) {
       agent.rampFrom.copy(airlock)
       agent.rampTo.set(door.x + (Math.random() - 0.5) * 0.7, door.y, door.z + (Math.random() - 0.5) * 0.7)
@@ -916,7 +917,7 @@ export class Astronauts {
           // of the doorway would claim the doorway, and the queue behind it inherits a
           // permanent wall. Out there it keeps its real site and tries again, which the crowd
           // thinning out is usually enough to fix.
-          const inDoorway = this._nearDoor(agent.pos)
+          const inDoorway = this._nearDoor(agent.pos, agent.thread)
           if (stuck && dist >= ARRIVE_RADIUS && !inDoorway) agent.site.copy(agent.pos)
           if (stuck && inDoorway) {
             agent.stateAge = 0

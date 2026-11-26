@@ -21,7 +21,7 @@ import {
   PLOT_PALETTE,
   PLOT_CELL,
 } from '../world/plots.js'
-import { translateCells } from '../world/plot-move.js'
+import { SHIP_CELL, translateCells } from '../world/plot-move.js'
 import { createBuilding, buildingUniforms, Scaffolds } from '../world/buildings.js'
 import { Ship } from '../world/ship.js'
 import { Astronauts } from '../agents/astronauts.js'
@@ -168,7 +168,14 @@ export class Colony {
     this.worldGroup.name = 'world'
     scene.add(this.worldGroup)
 
-    this.ship = new Ship(scene, shipPosition())
+    /**
+     * The landers. One by default, on the fixed cell; `setShips` makes it one per machine.
+     * Each crew member walks out of and back to the ship its thread's `machine` names.
+     */
+    this.shipSpecs = [{ id: null, cell: SHIP_CELL, live: true }]
+    this.ships = [new Ship(scene, shipPosition())]
+    /** Bare island cells with nothing on them, so ships on the rim are joined to the colony. */
+    this.fillCells = []
     this.astronauts = new Astronauts(scene, settings)
     this.astronauts.world = this._world()
     // Sized for the largest preset rather than the current one: unlike the astronaut meshes these
@@ -198,6 +205,10 @@ export class Colony {
     // everything is hidden must not quietly put them back on screen.
     this.uiVisible = true
     this.hoveredPlot = null
+    /** Every zone keeps its name up, not only the busy ones. For a view nobody hovers over. */
+    this.labelsAlways = false
+    /** How big the zone name plates are drawn; see `createLabel`. */
+    this.labelSize = 1
     this.activePlots = new Set()
     this._dustTint = new THREE.Color(this.planet.ground.high)
     this._c = new THREE.Color()
@@ -231,8 +242,7 @@ export class Colony {
     // The ship has legs, and legs have to reach the ground. Its landing spot is a fixed hex
     // cell, but the height of that spot is the planet's, so it is set here rather than once
     // at construction — a world with more relief would otherwise leave it hovering.
-    const ship = shipPosition()
-    this.ship.group.position.y = terrainHeight(ship.x, ship.z, this.planet)
+    this._settleShips()
 
     this._dustTint.set(this.planet.ground.high)
 
@@ -251,6 +261,60 @@ export class Colony {
     this._syncFaunaSites()
   }
 
+  /** The first lander: the only one, unless `setShips` has made more. */
+  get ship() {
+    return this.ships[0]
+  }
+
+  /** The ship a thread's crew member belongs to: its machine's, or the first one. */
+  shipFor(thread) {
+    const machine = thread?.machine
+    if (machine != null) {
+      const i = this.shipSpecs.findIndex((spec) => spec.id === machine)
+      if (i >= 0) return this.ships[i]
+    }
+    return this.ships[0]
+  }
+
+  /**
+   * One lander per machine. `specs` is `[{ id, cell, live }]`, in a stable order; `fill` is
+   * any bare island cells that join ships on the rim to the colony. A ship that is not live
+   * stands dark. Moving a ship re-lays the island, the scatter and the walkable ground.
+   */
+  setShips(specs, fill = []) {
+    const list = specs.length ? specs : [{ id: null, cell: SHIP_CELL, live: false }]
+    const before = this._shipSignature()
+    this.shipSpecs = list.map((spec) => ({ id: spec.id ?? null, cell: { q: spec.cell.q, r: spec.cell.r }, live: spec.live !== false }))
+    this.fillCells = fill.map((c) => ({ q: c.q, r: c.r }))
+    while (this.ships.length > this.shipSpecs.length) this.ships.pop().dispose()
+    while (this.ships.length < this.shipSpecs.length) this.ships.push(new Ship(this.scene, shipPosition(this.shipSpecs[this.ships.length].cell)))
+    this.shipSpecs.forEach((spec, i) => this.ships[i].setLive(spec.live))
+    this._settleShips()
+    if (this._shipSignature() === before) return
+    // The ground the ships stand on is part of the island's shape, so it moves with them.
+    if (this.planet.shape === 'island') this._buildTerrain()
+    else {
+      this._buildScatter()
+      if (this.island) this._syncIslandRock()
+      this._syncFaunaSites()
+    }
+  }
+
+  _shipSignature() {
+    const ships = this.shipSpecs.map((spec) => `${spec.cell.q},${spec.cell.r}`).join('/')
+    const fill = this.fillCells.map((c) => `${c.q},${c.r}`).join('/')
+    return `ships:${ships};fill:${fill}`
+  }
+
+  /** Every lander on its own cell, standing on the ground there, ramp toward the middle. */
+  _settleShips() {
+    this.shipSpecs.forEach((spec, i) => {
+      const at = shipPosition(spec.cell)
+      at.y = terrainHeight(at.x, at.z, this.planet)
+      this.ships[i].placeAt(at)
+    })
+  }
+
   /** Where the drones fly between: the lander, and every building with anyone at it. */
   _syncFaunaSites() {
     const sites = []
@@ -259,9 +323,9 @@ export class Colony {
       const p = entry.mesh.position
       sites.push({ x: p.x, y: p.y, z: p.z, radius: entry.mesh.userData.footprint, active: this._isActive(id) })
     }
-    const pad = shipPosition()
-    pad.y = this.ship.group.position.y
-    this.fauna.setSites({ ship: this.ship.shipDoor(), pad, sites })
+    const ship = this.ships.find((s) => s.live) || this.ship
+    const pad = ship.group.position.clone()
+    this.fauna.setSites({ ship: ship.shipDoor(), pad, sites })
   }
 
   /**
@@ -301,9 +365,23 @@ export class Colony {
     for (const plot of this.plotOrder) {
       for (const local of plot.localCenters) list.push({ x: plot.center.x + local.x, z: plot.center.z + local.z })
     }
-    const ship = shipPosition()
-    list.push({ x: ship.x, z: ship.z })
-    return list.slice(0, SKY_MAX_CELLS)
+    for (const spec of this.shipSpecs) {
+      const ship = shipPosition(spec.cell)
+      list.push({ x: ship.x, z: ship.z })
+    }
+    for (const cell of this.fillCells) {
+      const at = shipPosition(cell)
+      list.push({ x: at.x, z: at.z })
+    }
+    // Fill cells overlap the zones they surround; each cell counts once.
+    const seen = new Set()
+    const unique = list.filter((c) => {
+      const k = `${Math.round(c.x * 10)},${Math.round(c.z * 10)}`
+      if (seen.has(k)) return false
+      seen.add(k)
+      return true
+    })
+    return unique.slice(0, SKY_MAX_CELLS)
   }
 
   _footprintRadius() {
@@ -398,8 +476,10 @@ export class Colony {
         clear.push({ x: plot.center.x + local.x, z: plot.center.z + local.z, r: 8.6 })
       }
     }
-    const ship = shipPosition()
-    clear.push({ x: ship.x, z: ship.z, r: 7.5 })
+    for (const spec of this.shipSpecs) {
+      const ship = shipPosition(spec.cell)
+      clear.push({ x: ship.x, z: ship.z, r: 7.5 })
+    }
     this.scatterGroup = createScatter(this.planet, this.settings.get('scatterDensity'), clear, 4242, (x, z) => this.onIsland(x, z))
     this.worldGroup.add(this.scatterGroup)
     this._scatterFootprint = this._plotFootprint()
@@ -433,7 +513,7 @@ export class Colony {
 
   /** What the scatter has to avoid, as one string — cheap to compare every poll. */
   _plotFootprint() {
-    return this.plotOrder.map((plot) => plot.signature).join('|')
+    return [...this.plotOrder.map((plot) => plot.signature), this._shipSignature()].join('|')
   }
 
   /**
@@ -623,7 +703,8 @@ export class Colony {
     // between polls, and the colony file carries it between sessions.
     const layout = allocateCells(
       projects.map(([name, list]) => ({ id: name, size: list.length })),
-      this.plotCells
+      this.plotCells,
+      this.shipSpecs.map((spec) => spec.cell)
     )
     // Remembered, not replaced: a project that has just lost its last thread keeps its
     // ground on the books, and the oldest entries fall off the end.
@@ -660,7 +741,7 @@ export class Colony {
       this.plots.set(name, plot)
       this.plotGroup.add(plot.group)
 
-      const label = createLabel(name, accent)
+      const label = createLabel(name, accent, 4, this.labelSize)
       label.position.set(plot.labelAnchor.x, 3.2, plot.labelAnchor.z)
       plot.label = label
       this.labelGroup.add(label)
@@ -697,8 +778,8 @@ export class Colony {
   /** The bits of the world the crew needs to know about, as plain callbacks. */
   _world() {
     return {
-      shipDoor: () => this.ship.shipDoor(),
-      shipAirlock: () => this.ship.shipAirlock(),
+      shipDoor: (thread) => this.shipFor(thread).shipDoor(),
+      shipAirlock: (thread) => this.shipFor(thread).shipAirlock(),
       groundAt: (x, z) => this.groundAt(x, z),
       onIsland: (x, z) => this.onIsland(x, z),
     }
@@ -840,8 +921,10 @@ export class Colony {
       }
     }
 
-    const ship = shipPosition()
-    obstacles.push({ x: ship.x, z: ship.z, r: 3.4 + AGENT_RADIUS })
+    for (const spec of this.shipSpecs) {
+      const ship = shipPosition(spec.cell)
+      obstacles.push({ x: ship.x, z: ship.z, r: 3.4 + AGENT_RADIUS })
+    }
     this.nav.rebuild(obstacles)
   }
 
@@ -999,7 +1082,7 @@ export class Colony {
     for (const plot of this.plotOrder) {
       const label = plot.label
       if (!label) continue
-      const wanted = show && (this.activePlots.has(plot.id) || this.hoveredPlot === plot) ? 1 : 0
+      const wanted = show && (this.labelsAlways || this.activePlots.has(plot.id) || this.hoveredPlot === plot) ? 1 : 0
       const next = THREE.MathUtils.damp(label.material.opacity, wanted, 9, dt)
       label.material.opacity = next
       label.visible = next > 0.01
@@ -1056,7 +1139,7 @@ export class Colony {
     buildingUniforms.uNight.value = night
     // One write turns every rotor in the colony.
     buildingUniforms.uTime.value = elapsed
-    this.ship.update(dt, elapsed, night)
+    for (const ship of this.ships) ship.update(dt, elapsed, night)
 
     this._growBuildings(dt)
     this.astronauts.update(dt, elapsed)
@@ -1169,7 +1252,7 @@ export class Colony {
 
       // The ramp notices anyone stepping on or off it.
       if (agent.state === 'spawning' || (agent.state === 'leaving' && agent.scale < 0.6)) {
-        if (Math.random() < dt * 3) this.ship.ping()
+        if (Math.random() < dt * 3) this.shipFor(agent.thread).ping()
       }
     }
   }
@@ -1215,14 +1298,17 @@ export class Colony {
       }
     }
     // The lander's beacon and pad lights draw a slow halo of their own.
-    const ship = this.ship.group.position
-    const sdx = ship.x - focus.x
-    const sdz = ship.z - focus.z
-    if (sdx * sdx + sdz * sdz < reach2 && Math.random() < dt * (0.8 + night * 1.4)) {
-      const a = Math.random() * Math.PI * 2
-      const r = 2 + Math.random() * 3
-      c.setRGB(0.7, 1.4, 2.4)
-      this.particles.mote(ship.x + Math.cos(a) * r, ship.y + 0.3 + Math.random() * 5, ship.z + Math.sin(a) * r, c, 0.06, 5)
+    for (const lander of this.ships) {
+      if (!lander.live) continue
+      const ship = lander.group.position
+      const sdx = ship.x - focus.x
+      const sdz = ship.z - focus.z
+      if (sdx * sdx + sdz * sdz < reach2 && Math.random() < dt * (0.8 + night * 1.4)) {
+        const a = Math.random() * Math.PI * 2
+        const r = 2 + Math.random() * 3
+        c.setRGB(0.7, 1.4, 2.4)
+        this.particles.mote(ship.x + Math.cos(a) * r, ship.y + 0.3 + Math.random() * 5, ship.z + Math.sin(a) * r, c, 0.06, 5)
+      }
     }
   }
 
@@ -1294,7 +1380,7 @@ export class Colony {
     this.island?.dispose()
     this.rock?.dispose()
     this.water?.dispose()
-    this.ship.dispose()
+    for (const ship of this.ships) ship.dispose()
     this.astronauts.dispose()
     this.indicators.dispose()
     this.particles.dispose()

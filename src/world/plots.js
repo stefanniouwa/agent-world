@@ -143,17 +143,18 @@ const cellsNeeded = (threadCount) =>
  * @param previous Map of id → cells from the last pass (or a saved colony file).
  * @returns Map of id → cells.
  */
-export function allocateCells(projects, previous = new Map()) {
-  const laid = layOut(projects, previous)
+export function allocateCells(projects, previous = new Map(), reserved = [SHIP_CELL]) {
+  const laid = layOut(projects, previous, reserved)
   // Remembering where a zone sat is worth a great deal, right up until it leaves the colony
   // as scattered islands. Then the memory is describing a map that no longer exists, and
   // starting over — compact, from the middle, the way a first run does it — is the lesser
   // upheaval. It only happens when the alternative is visibly broken.
-  return isConnected(laid) ? laid : layOut(projects, new Map())
+  return isConnected(laid) ? laid : layOut(projects, new Map(), reserved)
 }
 
-function layOut(projects, previous) {
-  const reserved = key(SHIP_CELL.q, SHIP_CELL.r)
+function layOut(projects, previous, reservedCells) {
+  // The ships' cells: nobody may build there.
+  const reserved = new Set(reservedCells.map((c) => key(c.q, c.r)))
   // Shrinking has hysteresis. A zone sitting exactly on a cell boundary would otherwise
   // hand a tile back the moment one thread is archived and claim it again when the next
   // one starts — and every hand-back rebuilds the plot and walks its whole crew. A tile is
@@ -182,7 +183,7 @@ function layOut(projects, previous) {
   for (let ring = 0; (pool.length < total + 30 || ring <= farthest) && ring < POOL_RINGS; ring++) {
     for (const cell of hexRing(ring)) {
       const k = key(cell.q, cell.r)
-      if (k === reserved) continue
+      if (reserved.has(k)) continue
       pool.push(cell)
       free.add(k)
     }
@@ -257,8 +258,9 @@ function growBlob(cells, want, free) {
   }
 }
 
-export const shipPosition = () => {
-  const { x, z } = hexToWorld(SHIP_CELL.q, SHIP_CELL.r)
+/** Where a ship stands: the middle of its cell, the one fixed cell unless another is given. */
+export const shipPosition = (cell = SHIP_CELL) => {
+  const { x, z } = hexToWorld(cell.q, cell.r)
   return new THREE.Vector3(x, 0, z)
 }
 
@@ -678,7 +680,8 @@ export class Plot {
  * shader, so they stay upright and legible from any camera angle without a per-frame
  * lookAt on the CPU.
  */
-export function createLabel(text, accent, pixelRatio = 4) {
+/** `size` scales the plate: 1 is the full-window size, a smaller embedded view wants more. */
+export function createLabel(text, accent, pixelRatio = 4, size = 1) {
   const fontSize = 34
   const font = `500 ${fontSize}px ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif`
   const dot = 9
@@ -732,7 +735,7 @@ export function createLabel(text, accent, pixelRatio = 4) {
   texture.generateMipmaps = true
   texture.anisotropy = 8
 
-  const height = 0.56
+  const height = 0.56 * size
   const geo = new THREE.PlaneGeometry(height * (w / h), height)
   const mat = new THREE.MeshBasicMaterial({
     map: texture,
