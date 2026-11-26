@@ -43,7 +43,12 @@ const IS_WEBKIT =
  *    are where a soft buffer shows up first.
  */
 export class Engine {
-  constructor(settings) {
+  /**
+   * `maxPixelRatio` caps how many buffer pixels a CSS pixel may cost, on top of whatever the
+   * display reports. Unset, the display decides, as it always has.
+   */
+  constructor(settings, { maxPixelRatio = Infinity } = {}) {
+    this.maxPixelRatio = maxPixelRatio
     this.settings = settings
     // Timer replaces the deprecated Clock. Connecting it to the document means a tab that
     // has been in the background reports a zero delta rather than one enormous catch-up
@@ -354,7 +359,12 @@ export class Engine {
   }
 
   _targetScale() {
-    return this.settings.get('renderScale') * (window.devicePixelRatio || 1)
+    return this.settings.get('renderScale') * this._dpr()
+  }
+
+  /** The display's pixel ratio, held under `maxPixelRatio`. */
+  _dpr() {
+    return Math.min(window.devicePixelRatio || 1, this.maxPixelRatio)
   }
 
   start() {
@@ -428,12 +438,12 @@ export class Engine {
     const ceiling = this._targetScale()
     const current = this.viewport?.scale ?? ceiling
     // The floor is relative to the display, and never above the user's own ceiling.
-    const floor = Math.min(ceiling, 0.35 * (window.devicePixelRatio || 1))
+    const floor = Math.min(ceiling, 0.35 * this._dpr())
 
     // Sustained evidence, not one sample: 3 slow seconds to drop, 8 fast ones to climb.
     this._slow = fps < 45 ? (this._slow || 0) + 1 : 0
     this._fast = fps > 58 ? (this._fast || 0) + 1 : 0
-    const dpr = window.devicePixelRatio || 1
+    const dpr = this._dpr()
 
     let next = current
     if (this._slow >= 3) {

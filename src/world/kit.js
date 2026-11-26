@@ -1,5 +1,7 @@
 import * as THREE from 'three'
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js'
+// Meshopt-compressed glbs (the spectator build ships those) need the decoder; plain ones ignore it.
+import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js'
 import * as BufferGeometryUtils from 'three/addons/utils/BufferGeometryUtils.js'
 
 /**
@@ -67,7 +69,7 @@ let loading = null
  */
 export function loadKit() {
   if (!loading) {
-    const loader = new GLTFLoader()
+    const loader = new GLTFLoader().setMeshoptDecoder(MeshoptDecoder)
     loading = Promise.all(
       Object.values(KITS).map((kit) =>
         loader.loadAsync(`${import.meta.env.BASE_URL}assets/${kit.file}`).then((gltf) => {

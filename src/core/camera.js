@@ -46,7 +46,20 @@ const damp = (current, target, lambda, dt) => THREE.MathUtils.damp(current, targ
  * home on its own would fight you; tidying the angle after you stop does not.
  */
 export class CameraRig {
-  constructor(camera, domElement, settings) {
+  /**
+   * `options` narrow the rig for an embedded view: distance and tilt limits, how far the
+   * target may wander (`worldLimit`), `pan: false` to make a one-finger or left drag orbit
+   * instead of pan, and `wheelAllowed(event)` to let a wheel event scroll the page instead.
+   * Left out, the rig behaves exactly as it always has.
+   */
+  constructor(camera, domElement, settings, options = {}) {
+    this.minDistance = options.minDistance ?? MIN_DIST
+    this.maxDistance = options.maxDistance ?? MAX_DIST
+    this.minPolar = options.minPolar ?? MIN_POLAR
+    this.maxPolar = options.maxPolar ?? MAX_POLAR
+    this.worldLimit = options.worldLimit ?? this.worldLimit
+    this.pan = options.pan ?? true
+    this.wheelAllowed = options.wheelAllowed ?? null
     this.camera = camera
     this.dom = domElement
     this.settings = settings
@@ -138,7 +151,7 @@ export class CameraRig {
     }
 
     // Right, middle, ctrl or shift all mean "tilt and rotate", as in Earth.
-    const orbit = e.button === 2 || e.button === 1 || e.ctrlKey || e.shiftKey || e.altKey
+    const orbit = !this.pan || e.button === 2 || e.button === 1 || e.ctrlKey || e.shiftKey || e.altKey
     this._mode = orbit ? 'orbit' : 'pan'
     this._last.set(e.clientX, e.clientY)
     this.interacting = true
@@ -165,13 +178,13 @@ export class CameraRig {
       const d = this._pinchDistance()
       const [cx, cy] = this._pinchCentre()
       if (this._pinch > 0 && d > 0) {
-        this.desiredDistance = THREE.MathUtils.clamp(this.desiredDistance * (this._pinch / d), MIN_DIST, MAX_DIST)
+        this.desiredDistance = THREE.MathUtils.clamp(this.desiredDistance * (this._pinch / d), this.minDistance, this.maxDistance)
         this.distance = this.desiredDistance
         this._sync()
       }
       this._pinch = d
       // Two fingers pan as well as zoom, both anchored on the point between them.
-      this._dragGround(cx, cy)
+      if (this.pan) this._dragGround(cx, cy)
       return
     }
 
@@ -184,7 +197,7 @@ export class CameraRig {
       e.preventDefault()
       this.desiredAzimuth -= dx * 0.006
       // Mouse up tilts toward the horizon, mouse down returns to overhead — Earth's sense.
-      this.desiredPolar = THREE.MathUtils.clamp(this.desiredPolar - dy * 0.005, MIN_POLAR, MAX_POLAR)
+      this.desiredPolar = THREE.MathUtils.clamp(this.desiredPolar - dy * 0.005, this.minPolar, this.maxPolar)
       return
     }
 
@@ -223,7 +236,7 @@ export class CameraRig {
       this.suppressed = false
       this._hasAnchor = false
     } else if (this._pointers.size === 1) {
-      this._mode = 'pan'
+      this._mode = this.pan ? 'pan' : 'orbit'
       const [only] = this._pointers.values()
       this._last.set(only.x, only.y)
       this._grab(only.x, only.y)
@@ -232,6 +245,8 @@ export class CameraRig {
 
   _wheel(e) {
     if (!this.enabled) return
+    // Not ours to take: left alone, the event scrolls whatever page is around the view.
+    if (this.wheelAllowed && !this.wheelAllowed(e)) return
     e.preventDefault()
     // Trackpads report tiny per-event deltas and mice report ~100, so both are normalised
     // to the same felt zoom step. A pinch on a trackpad arrives as ctrl+wheel.
@@ -239,7 +254,7 @@ export class CameraRig {
     const raw = (e.deltaY * unit) / 100
     const step = Math.sign(raw) * Math.min(Math.abs(raw), 2.5) * (e.ctrlKey ? 1.6 : 1)
 
-    this.desiredDistance = THREE.MathUtils.clamp(this.desiredDistance * (1 + step * 0.16), MIN_DIST, MAX_DIST)
+    this.desiredDistance = THREE.MathUtils.clamp(this.desiredDistance * (1 + step * 0.16), this.minDistance, this.maxDistance)
     // Hold the point under the pointer still for as long as the dolly takes to settle.
     if (this.groundPoint(e.clientX, e.clientY, this._hit2)) {
       this._zoom = { world: this._hit2.clone(), sx: e.clientX, sy: e.clientY }
@@ -260,9 +275,9 @@ export class CameraRig {
   _clampTarget() {
     const t = this.desiredTarget
     const len = Math.hypot(t.x, t.z)
-    if (len > WORLD_LIMIT) {
-      t.x = (t.x / len) * WORLD_LIMIT
-      t.z = (t.z / len) * WORLD_LIMIT
+    if (len > this.worldLimit) {
+      t.x = (t.x / len) * this.worldLimit
+      t.z = (t.z / len) * this.worldLimit
     }
   }
 
@@ -276,7 +291,7 @@ export class CameraRig {
     this.desiredTarget.copy(point)
     this.desiredTarget.y = 0
     this._clampTarget()
-    if (distance) this.desiredDistance = THREE.MathUtils.clamp(distance, MIN_DIST, MAX_DIST)
+    if (distance) this.desiredDistance = THREE.MathUtils.clamp(distance, this.minDistance, this.maxDistance)
     this._zoom = null
     this.idleFor = 99 // settle to isometric right away rather than after a pause
   }

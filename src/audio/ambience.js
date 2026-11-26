@@ -57,7 +57,8 @@ const rand = (lo, hi) => lo + Math.random() * (hi - lo)
 const clamp01 = (v) => (v < 0 ? 0 : v > 1 ? 1 : v)
 
 export class Ambience {
-  constructor(settings) {
+  /** `manifest: false` skips looking for sample overrides, so the synth is all there is. */
+  constructor(settings, options = {}) {
     this.settings = settings
     this.ctx = null
     this.master = null
@@ -128,7 +129,7 @@ export class Ambience {
 
     // The manifest is fetched once, straight away; decoding waits for a context and for the
     // sound actually being asked for. A missing manifest is the normal case.
-    if (typeof fetch === 'function') {
+    if (typeof fetch === 'function' && options.manifest !== false) {
       try {
         fetch(BASE_URL + MANIFEST_PATH)
           .then((r) => (r.ok ? r.json() : null))
@@ -398,9 +399,15 @@ export class Ambience {
     this.effectsBus = effectsBus
   }
 
+  /** Silence everything while the view is not being looked at, whatever the tab says. */
+  setVisible(visible) {
+    this._shown = Boolean(visible)
+    this._applyMute()
+  }
+
   _applyMute() {
     if (!this.mute) return
-    const target = this._enabled && this._visible ? 1 : 0
+    const target = this._enabled && this._visible && this._shown !== false ? 1 : 0
     this.mute.gain.setTargetAtTime(target, this.ctx.currentTime, 0.12)
   }
 

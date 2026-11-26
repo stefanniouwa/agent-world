@@ -1,6 +1,8 @@
 import * as THREE from 'three'
 import { withCurve } from '../core/curve.js'
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js'
+// Meshopt-compressed glbs (the spectator build ships those) need the decoder; plain ones ignore it.
+import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js'
 import * as BufferGeometryUtils from 'three/addons/utils/BufferGeometryUtils.js'
 
 /**
@@ -191,7 +193,7 @@ export function crewRig() {
 }
 
 async function bake(dropMeshes = DROP_MESHES, tweaks = TWEAKS) {
-  const gltf = gltfCache || (gltfCache = await new GLTFLoader().loadAsync(CREW_URL))
+  const gltf = gltfCache || (gltfCache = await new GLTFLoader().setMeshoptDecoder(MeshoptDecoder).loadAsync(CREW_URL))
   const root = gltf.scene
   root.updateMatrixWorld(true)
 

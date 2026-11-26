@@ -223,8 +223,13 @@ const RENDER_KEYS = new Set([
 ])
 
 export class Settings {
-  constructor() {
-    const stored = load()
+  /**
+   * `persist: false` keeps everything in memory: nothing is read from or written to this
+   * browser's storage. The spectator build runs that way, since its settings are fixed.
+   */
+  constructor({ persist = true } = {}) {
+    this.persist = persist
+    const stored = persist ? load() : {}
     this.values = { ...DEFAULTS, ...stored }
     // An existing Low/Potato install should not inherit Balanced's new effect by accident.
     if (!Object.hasOwn(stored, 'ambientOcclusion')) {
@@ -290,6 +295,7 @@ export class Settings {
   }
 
   _scheduleSave() {
+    if (!this.persist) return
     clearTimeout(this._saveTimer)
     this._saveTimer = setTimeout(() => {
       try {
