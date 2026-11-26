@@ -1,0 +1,12 @@
+{
+  "machine": "mac-mini",
+  "endpoint": "https://stefannio.tech/api/lab/ingest",
+  "database": "~/.t3/userdata/statev2.sqlite",
+  "salt": "written by install.sh",
+  "projects": {
+    "stefannio": "Stefan's portfolio website",
+    "barista-rush": "Barista Rush",
+    "bizsec-io": "bizsec.io",
+    "fleet": "fleet"
+  }
+}
