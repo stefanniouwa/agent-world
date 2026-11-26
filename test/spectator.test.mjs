@@ -1,0 +1,159 @@
+/**
+ * The spectator build: wire agents into colony threads, the postMessage checks, and where the
+ * ships stand. The checks are the part worth guarding: a world that took a message from any
+ * frame or origin would draw whatever a stranger sent it.
+ */
+import test from 'node:test'
+import assert from 'node:assert/strict'
+
+import { ASLEEP_AGE, toThread, turnsToBytes, worldToThreads } from '../src/spectator/wire.js'
+import { acceptMessage, outbound } from '../src/spectator/messages.js'
+import { shipLayout } from '../src/spectator/layout.js'
+import { hexDistance } from '../src/world/plot-move.js'
+
+const now = Date.parse('2026-11-27T00:00:00Z')
+const agent = (extra = {}) => ({
+  id: 'a_0123456789abcdef',
+  project: 'bizsec.io',
+  harness: 'claude-code',
+  model: 'claude-opus-5-5',
+  state: 'working',
+  since: now - 60_000,
+  createdAt: now - 3_600_000,
+  turns: 12,
+  subagents: 2,
+  machine: 'mac-mini',
+  ...extra,
+})
+
+test('a wire agent becomes a thread with a generic title and no way to open it', () => {
+  const t = toThread(agent(), { now })
+  assert.equal(t.id, 'a_0123456789abcdef')
+  assert.equal(t.title, 'Claude Code agent, working')
+  assert.equal(t.project, 'bizsec.io')
+  assert.equal(t.machine, 'mac-mini')
+  assert.equal(t.harness, 'claude-code')
+  assert.equal(t.lastActivityAt, now - 60_000)
+  assert.equal(t.canOpen, false)
+  assert.equal(t.archived, false)
+  assert.equal(t.subagents.length, 2)
+  assert.ok(t.subagents.every((s) => s.task === '' && s.id))
+})
+
+test('each state maps onto the flags the colony reads', () => {
+  const flags = (state) => {
+    const t = toThread(agent({ state }), { now })
+    return [t.running, t.unread, t.hasError]
+  }
+  assert.deepEqual(flags('working'), [true, false, false])
+  assert.deepEqual(flags('waiting'), [false, true, false])
+  assert.deepEqual(flags('errored'), [false, false, true])
+  assert.deepEqual(flags('idle'), [false, false, false])
+  assert.equal(toThread(agent({ state: 'nonsense' }), { now }).title, 'Claude Code agent, idle')
+  assert.equal(toThread(agent({ harness: 'mystery' }), { now }).title, 'Agent agent, working')
+})
+
+test('turns set how finished a thread looks, on a log scale', () => {
+  const progress = (turns) => Math.min(1, Math.max(0.05, (Math.log10(turnsToBytes(turns)) - 3) / 3.5))
+  assert.ok(progress(1) < 0.12, `one turn barely started (${progress(1)})`)
+  assert.ok(progress(60) > 0.97, `sixty turns finished (${progress(60)})`)
+  assert.ok(progress(10) > progress(3) && progress(30) > progress(10))
+  assert.equal(turnsToBytes(0), 1000)
+  assert.equal(turnsToBytes(undefined), 1000)
+})
+
+test('every agent of a machine that is not live sleeps, with no errands out', () => {
+  const world = {
+    v: 1,
+    machines: [
+      { id: 'mac-mini', live: true },
+      { id: 'macbook-air', live: false },
+    ],
+    agents: [agent(), agent({ id: 'a_1111111111111111', machine: 'macbook-air', state: 'working' })],
+  }
+  const { threads, ships } = worldToThreads(world, now)
+  assert.deepEqual(ships, [
+    { id: 'mac-mini', live: true },
+    { id: 'macbook-air', live: false },
+  ])
+  const air = threads.find((t) => t.machine === 'macbook-air')
+  assert.equal(air.running, false)
+  assert.equal(air.subagents.length, 0)
+  assert.ok(now - air.lastActivityAt >= ASLEEP_AGE)
+})
+
+test('a world with no machines still has one ship, dark', () => {
+  assert.deepEqual(worldToThreads({ v: 1, machines: [], agents: [] }, now).ships, [{ id: null, live: false }])
+})
+
+test('at most four machines, and a repeated agent id is drawn once', () => {
+  const machines = ['a', 'b', 'c', 'd', 'e'].map((id) => ({ id, live: true }))
+  const { ships, threads } = worldToThreads({ v: 1, machines, agents: [agent(), agent()] }, now)
+  assert.equal(ships.length, 4)
+  assert.equal(threads.length, 1)
+})
+
+test('project names are used as given, and a missing one is private', () => {
+  assert.equal(toThread(agent({ project: "Stefan's portfolio website" }), { now }).project, "Stefan's portfolio website")
+  assert.equal(toThread(agent({ project: '' }), { now }).project, 'Private work')
+})
+
+// ── messages ────────────────────────────────────────────────────────────────────────────
+
+const parent = { name: 'parent' }
+const self = { name: 'self' }
+const origin = 'https://stefannio.tech'
+const event = (data, extra = {}) => ({ origin, source: parent, data: { source: 'agent-world', ...data }, ...extra })
+const accept = (e, ctx = {}) => acceptMessage(e, { origin, parent, self, ...ctx })
+
+test('a message from the parent on the same origin is accepted', () => {
+  assert.equal(accept(event({ type: 'home' })).type, 'home')
+  assert.equal(accept(event({ type: 'focus', id: 'a_0123456789abcdef' })).id, 'a_0123456789abcdef')
+  assert.equal(accept(event({ type: 'sound', on: true })).on, true)
+  assert.equal(accept(event({ type: 'visible', on: false })).on, false)
+  assert.ok(accept(event({ type: 'world', world: { v: 1, machines: [], agents: [] } })))
+})
+
+test('another origin, another frame, or the window itself is ignored', () => {
+  assert.equal(accept(event({ type: 'home' }, { origin: 'https://evil.example' })), null)
+  assert.equal(accept(event({ type: 'home' }, { source: { name: 'sibling' } })), null)
+  assert.equal(accept(event({ type: 'home' }, { source: null })), null)
+  // Not framed: `window.parent` is the window, and its own messages are not the page's.
+  assert.equal(accept(event({ type: 'home' }, { source: self }), { parent: self }), null)
+})
+
+test('a message without the source tag, of an unknown type, or malformed is ignored', () => {
+  assert.equal(accept({ origin, source: parent, data: { type: 'home' } }), null)
+  assert.equal(accept({ origin, source: parent, data: 'home' }), null)
+  assert.equal(accept(event({ type: 'open', id: 'x' })), null)
+  assert.equal(accept(event({ type: 'focus' })), null)
+  assert.equal(accept(event({ type: 'sound', on: 'yes' })), null)
+  assert.equal(accept(event({ type: 'world', world: { v: 2, agents: [] } })), null)
+  assert.equal(accept(event({ type: 'world', world: { v: 1 } })), null)
+})
+
+test('outgoing messages carry the source tag and cannot be retyped by their fields', () => {
+  assert.deepEqual(outbound('select', { id: null }), { id: null, source: 'agent-world', type: 'select' })
+  assert.equal(outbound('ready', { type: 'fatal', source: 'x' }).type, 'ready')
+})
+
+// ── ships ───────────────────────────────────────────────────────────────────────────────
+
+test('ships stand on a ring outside the colony, apart, and never on the fill', () => {
+  for (const count of [1, 2, 3, 4]) {
+    const { ring, ships, fill } = shipLayout([7, 5, 3, 3, 2], count)
+    assert.equal(ships.length, count)
+    assert.ok(ring >= 2)
+    for (const ship of ships) assert.equal(hexDistance(ship, { q: 0, r: 0 }), ring)
+    const keys = new Set(ships.map((c) => `${c.q},${c.r}`))
+    assert.equal(keys.size, count)
+    for (const c of fill) assert.ok(!keys.has(`${c.q},${c.r}`))
+    for (let i = 0; i < ships.length; i++) {
+      for (let j = i + 1; j < ships.length; j++) assert.ok(hexDistance(ships[i], ships[j]) >= 2, 'clear space between ships')
+    }
+  }
+})
+
+test('a bigger colony pushes the ships further out', () => {
+  assert.ok(shipLayout(Array(20).fill(14), 4).ring > shipLayout([3], 4).ring)
+})

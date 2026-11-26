@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Agent world test host</title>
+    <link rel="icon" href="data:," />
+    <!--
+      Dev only: `npm run dev:spectator`, then open /spectator.html. It frames the spectator
+      world the way stefannio.tech does, sends it a demo world, and logs what comes back.
+      Not part of either build.
+    -->
+    <style>
+      :root {
+        color-scheme: light;
+        font: 14px/1.4 system-ui, sans-serif;
+      }
+      body {
+        margin: 0;
+        padding: 16px;
+        background: #f4f2ee;
+        color: #222;
+      }
+      h1 {
+        font-size: 16px;
+        margin: 0 0 8px;
+      }
+      .frame {
+        position: relative;
+        width: 100%;
+        height: min(70vh, 640px);
+        border-radius: 14px;
+        overflow: hidden;
+        background: #bfdcf3;
+      }
+      iframe {
+        border: 0;
+        width: 100%;
+        height: 100%;
+        display: block;
+      }
+      .bar {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin: 12px 0;
+      }
+      button {
+        font: inherit;
+        padding: 6px 12px;
+        border-radius: 8px;
+        border: 1px solid #ccc;
+        background: #fff;
+        cursor: pointer;
+      }
+      #log {
+        font: 12px/1.4 ui-monospace, monospace;
+        white-space: pre-wrap;
+        max-height: 160px;
+        overflow: auto;
+        background: #fff;
+        border-radius: 8px;
+        padding: 8px;
+      }
+      .spacer {
+        height: 60vh;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Agent world test host</h1>
+    <div class="frame"><iframe id="world" src="/world.html" title="Agent world" allow="autoplay"></iframe></div>
+    <div class="bar">
+      <button id="home">Home</button>
+      <button id="focus">Focus next</button>
+      <button id="deselect">Deselect</button>
+      <button id="sound">Sound off</button>
+      <button id="visible">Pause drawing</button>
+      <button id="shuffle">Shuffle states</button>
+    </div>
+    <div id="log"></div>
+    <div class="spacer"></div>
+    <script type="module">
+      const frame = document.getElementById('world')
+      const log = (line) => {
+        const el = document.getElementById('log')
+        el.textContent = `${new Date().toLocaleTimeString()} ${line}\n` + el.textContent
+      }
+      const send = (type, fields = {}) =>
+        frame.contentWindow.postMessage({ source: 'agent-world', type, ...fields }, location.origin)
+
+      const now = Date.now()
+      const min = 60_000
+      const machines = [
+        { id: 'mac-mini', name: 'Mac mini', live: true, lastSeenAt: now - min },
+        { id: 'macbook-air', name: 'MacBook Air', live: false, lastSeenAt: now - 300 * min },
+        { id: 'cloud-vm', name: 'Cloud VM', live: true, lastSeenAt: now - min },
+        { id: 'grok-vm', name: 'Grok VM', live: true, lastSeenAt: now - 2 * min },
+      ]
+      const projects = ["Stefan's portfolio website", 'Barista Rush', 'bizsec.io', 'fleet', 'Private work']
+      const harnesses = ['claude-code', 'codex', 'cursor', 'other']
+      const states = ['working', 'waiting', 'idle', 'errored']
+      const hex = (n) => n.toString(16).padStart(16, '0')
+      const agents = Array.from({ length: 17 }, (_, i) => {
+        const machine = machines[i % machines.length]
+        return {
+          id: `a_${hex(0x5eed00 + i * 7919)}`,
+          project: projects[i % projects.length],
+          harness: harnesses[i % harnesses.length],
+          model: '',
+          state: machine.live ? states[(i * 3) % states.length] : 'idle',
+          since: now - (i * 7 + 1) * min,
+          createdAt: now - (i * 40 + 30) * min,
+          turns: [1, 4, 12, 25, 40, 60][i % 6],
+          subagents: machine.live && i % 4 === 0 ? 1 + (i % 3) : 0,
+          machine: machine.id,
+        }
+      })
+      const world = () => ({ v: 1, generatedAt: Date.now(), machines, agents })
+
+      let ready = false
+      window.addEventListener('message', (event) => {
+        if (event.origin !== location.origin || event.source !== frame.contentWindow) return
+        const data = event.data
+        if (!data || data.source !== 'agent-world') return
+        log(`<- ${JSON.stringify(data)}`)
+        if (data.type === 'ready') {
+          ready = true
+          send('world', { world: world() })
+        }
+      })
+      setInterval(() => ready && send('world', { world: world() }), 15000)
+
+      let focusAt = 0
+      let sound = false
+      let visible = true
+      document.getElementById('home').onclick = () => send('home')
+      document.getElementById('deselect').onclick = () => send('deselect')
+      document.getElementById('focus').onclick = () => {
+        const id = agents[focusAt++ % agents.length].id
+        log(`-> focus ${id}`)
+        send('focus', { id })
+      }
+      document.getElementById('sound').onclick = (e) => {
+        sound = !sound
+        e.target.textContent = sound ? 'Sound on' : 'Sound off'
+        send('sound', { on: sound })
+      }
+      document.getElementById('visible').onclick = (e) => {
+        visible = !visible
+        e.target.textContent = visible ? 'Pause drawing' : 'Resume drawing'
+        send('visible', { on: visible })
+      }
+      document.getElementById('shuffle').onclick = () => {
+        for (const a of agents) {
+          const m = machines.find((x) => x.id === a.machine)
+          if (m.live) a.state = states[Math.floor(Math.random() * states.length)]
+          a.since = Date.now() - Math.floor(Math.random() * 60) * min
+        }
+        send('world', { world: world() })
+      }
+      // The real page pauses the world while it is scrolled out of view.
+      new IntersectionObserver(([entry]) => send('visible', { on: entry.isIntersecting })).observe(frame)
+      window.__host = { send, agents, world }
+    </script>
+  </body>
+</html>

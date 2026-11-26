@@ -1,5 +1,5 @@
 {
-  "name": "bot-crossing",
+  "name": "agent-world",
   "version": "1.0.0",
   "private": true,
   "type": "module",
@@ -33,7 +33,9 @@
   ],
   "scripts": {
     "dev": "npm run assets --silent && vite",
+    "dev:spectator": "vite --mode spectator",
     "build": "npm run assets --silent && vite build",
+    "build:spectator": "vite build --mode spectator",
     "start": "vite build && node server/serve.mjs",
     "serve": "node server/serve.mjs",
     "assets": "node tools/build-assets.mjs",
@@ -46,6 +48,7 @@
   "devDependencies": {
     "@gltf-transform/core": "^4.4.2",
     "@gltf-transform/functions": "^4.4.2",
+    "meshoptimizer": "1.3.0",
     "vite": "^7.1.0"
   }
 }
