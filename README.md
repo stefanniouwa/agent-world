@@ -1,3 +1,12 @@
+## This fork
+
+Agent world is a fork of [Bot Crossing](https://github.com/Station-Sciences/bot-crossing) by Jarren Rocks, used under its MIT licence. It adds a spectator build that only watches, for the public page at stefannio.tech/lab. [SPECTATOR.md](SPECTATOR.md) has the wire format and the messages between the world and the page that frames it.
+
+- `npm run dev:spectator`, then open `/spectator.html`. It frames the world and sends it a demo.
+- `npm run build:spectator` writes `dist-spectator/`, with the models compressed.
+
+The art is CC0, by Kay Lousberg and Kenney. See [CREDITS.md](public/assets/CREDITS.md). The name Bot Crossing and the crew character design are not part of the MIT grant, as [TRADEMARKS.md](TRADEMARKS.md) explains.
+
 # Bot Crossing — your agent threads, as a colony
 
 **[botcrossing.com](https://botcrossing.com)**
