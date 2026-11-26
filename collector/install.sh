@@ -4,7 +4,11 @@
 # Safe to run again. It keeps an existing config and an existing key.
 set -eu
 
-machine=${1:?usage: sh collector/install.sh <mac-mini|macbook-air>}
+machine=${1:?usage: sh collector/install.sh <mac-mini|macbook-air|cloud-vm|grok-vm>}
+case "$machine" in
+  mac-mini|macbook-air|cloud-vm|grok-vm) ;;
+  *) echo "Unknown machine \"$machine\". Use mac-mini, macbook-air, cloud-vm or grok-vm." >&2; exit 1 ;;
+esac
 here=$(cd "$(dirname "$0")" && pwd)
 dir="$HOME/.config/agent-world"
 config="$dir/config.json"
@@ -20,9 +24,10 @@ if [ ! -f "$config" ]; then
   echo "Wrote $config"
 fi
 
-# The key goes straight from openssl into the keychain and is never printed.
+# The key goes from openssl into the keychain through security's own prompt
+# on stdin, so it never shows in a process list and is never printed.
 if ! security find-generic-password -a agent-world -s agent-world-push >/dev/null 2>&1; then
-  security add-generic-password -a agent-world -s agent-world-push -w "$(openssl rand -hex 32)"
+  printf 'add-generic-password -a agent-world -s agent-world-push -w %s\n' "$(openssl rand -hex 32)" | security -i >/dev/null
   echo "Stored a new push key in the login keychain"
 fi
 
