@@ -43,6 +43,62 @@ function fatal(reason) {
   post('fatal', { reason })
 }
 
+/**
+ * Give the main thread back before the next piece of boot work. The world shares its thread
+ * with the page that frames it, so no single step may hold it for long.
+ */
+function nextTask() {
+  if (globalThis.scheduler?.yield) return globalThis.scheduler.yield()
+  return new Promise((resolve) => {
+    const channel = new MessageChannel()
+    channel.port1.onmessage = () => resolve()
+    channel.port2.postMessage(null)
+  })
+}
+
+/** Every texture the scene's visible materials use, once each. */
+function sceneTextures(scene) {
+  const out = new Set()
+  scene.traverseVisible((object) => {
+    const materials = Array.isArray(object.material) ? object.material : object.material ? [object.material] : []
+    for (const material of materials) {
+      for (const value of Object.values(material)) if (value?.isTexture) out.add(value)
+      for (const uniform of Object.values(material.uniforms || {})) if (uniform?.value?.isTexture) out.add(uniform.value)
+    }
+  })
+  return out
+}
+
+/**
+ * A throwaway scene holding one quad per material the post-processing passes own, so they
+ * can be compiled ahead of the first frame like everything else.
+ */
+function postMaterials(composer) {
+  const scene = new THREE.Scene()
+  const geometry = new THREE.PlaneGeometry(1, 1)
+  const seen = new Set()
+  const take = (value) => {
+    if (value?.isMaterial && !seen.has(value)) {
+      seen.add(value)
+      scene.add(new THREE.Mesh(geometry, value))
+    }
+  }
+  for (const pass of composer?.passes || []) {
+    for (const value of Object.values(pass)) {
+      if (Array.isArray(value)) value.forEach(take)
+      else take(value)
+      take(value?.material)
+      take(value?._mesh?.material)
+    }
+  }
+  return scene
+}
+
+/** Resolves once the browser has drawn a frame after this call. */
+function afterFrame() {
+  return new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
+}
+
 function hasWebGL2() {
   try {
     return Boolean(document.createElement('canvas').getContext('webgl2'))
@@ -53,15 +109,13 @@ function hasWebGL2() {
 
 if (!hasWebGL2()) fatal('webgl2-unavailable')
 else {
-  try {
-    start()
-  } catch (err) {
+  start().catch((err) => {
     console.error(err)
     fatal('renderer-failed')
-  }
+  })
 }
 
-function start() {
+async function start() {
   const touch = window.matchMedia('(pointer: coarse)').matches
   const maxPixelRatio = touch ? 1.5 : 2
   const settings = new Settings({ persist: false })
@@ -92,6 +146,7 @@ function start() {
     fatal('context-lost')
   })
   engine.setPlanetGrade(PLANETS.sky.grade)
+  await nextTask()
 
   // The wheel belongs to the page around the frame until the visitor has clicked into the
   // world, or holds ctrl or cmd. Leaving the world hands it back.
@@ -109,7 +164,8 @@ function start() {
   engine.canvas.addEventListener('pointerleave', () => (engaged = false))
   window.addEventListener('blur', () => (engaged = false))
 
-  const colony = new Colony(engine.scene, settings, engine.camera, engine.renderer)
+  // The ground is laid later, a step at a time, once the models are in.
+  const colony = new Colony(engine.scene, settings, engine.camera, engine.renderer, { deferGround: true })
   colony.labelsAlways = true
   // The frame is a slice of a page, not a whole window, so the names are drawn larger.
   colony.labelSize = touch ? 1.6 : 1.9
@@ -329,7 +385,32 @@ function start() {
   let ready = false
   let pending = null
 
-  function applyWorld(world) {
+  /**
+   * A world is applied in steps, a task each: the roster, then the ground the zones moved,
+   * then the grass. A world that arrives while one is going in waits, and only the newest
+   * waiting one is applied.
+   */
+  let waiting = null
+  let applying = false
+  function queueWorld(world) {
+    waiting = world
+    if (!applying) drainWorlds()
+  }
+
+  async function drainWorlds() {
+    applying = true
+    try {
+      while (waiting && !stopped) {
+        const world = waiting
+        waiting = null
+        await applyWorld(world)
+      }
+    } finally {
+      applying = false
+    }
+  }
+
+  async function applyWorld(world) {
     const now = Date.now()
     const { threads, ships } = worldToThreads(world, now)
     const list = withErrands(threads)
@@ -340,7 +421,8 @@ function start() {
     ring = layout.ring
     colony.setShips(
       ships.map((ship, i) => ({ ...ship, cell: layout.ships[i] })),
-      layout.fill
+      layout.fill,
+      { rebuild: false }
     )
     colony.setThreads(list, new Set(), new Set(), known)
     for (const t of list) known.add(t.id)
@@ -349,11 +431,20 @@ function start() {
       home({ snap: true })
     }
     if (selectedId && !colony.agentFor(selectedId)) select(null, { notify: true })
+    await nextTask()
+    colony.settleGround()
+    await nextTask()
+    colony.buildGrass()
   }
 
-  let running = true
+  // The loop starts once the first frame has something to show; see the end of `start`.
+  let running = false
+  let booted = false
+  let shown = true
   function setVisible(on) {
+    shown = on
     ambience.setVisible(on)
+    if (!booted) return
     if (on && !running && !stopped) {
       running = true
       engine.start()
@@ -369,7 +460,7 @@ function start() {
     if (!data) return
     switch (data.type) {
       case 'world':
-        if (ready) applyWorld(data.world)
+        if (ready) queueWorld(data.world)
         else pending = data.world
         break
       case 'home':
@@ -443,22 +534,56 @@ function start() {
     },
   })
 
-  engine.start()
   // For poking at the world from a dev console and the visual checks. Not in the build.
   if (import.meta.env.DEV) window.agentWorld = { engine, rig, colony, settings, select, plates: () => shownPlates, badges: () => shownBadges }
 
+  // The rest of boot, one short task at a time: models, the ground, the grass, the shaders,
+  // and then the first frame. Only after that frame is the world ready.
   const settle = (p) => p.then(() => null, (err) => err)
-  Promise.all([settle(loadKit()), settle(loadCrew())]).then(([kitError, crewError]) => {
-    if (kitError || crewError) {
-      console.error(kitError || crewError)
-      fatal('assets-failed')
-      return
-    }
-    colony.astronauts.setRig(crewRig())
-    colony.onAssetsReady()
-    ready = true
-    if (pending) applyWorld(pending)
-    pending = null
-    post('ready')
-  })
+  const [kitError, crewError] = await Promise.all([settle(loadKit()), settle(loadCrew())])
+  if (kitError || crewError) {
+    console.error(kitError || crewError)
+    fatal('assets-failed')
+    return
+  }
+  await nextTask()
+  colony.astronauts.setRig(crewRig())
+  await nextTask()
+  colony.onAssetsReady()
+  await nextTask()
+  colony.buildGrass()
+  await nextTask()
+  // Every material compiles now, in parallel where the driver allows, rather than all at
+  // once inside the first frame.
+  // Compiled against the buffer the scene is really drawn into: a program built for the
+  // canvas (tone mapped, sRGB) is not the one the post chain's linear buffer asks for.
+  const target = engine.composer?.readBuffer ?? null
+  engine.renderer.setRenderTarget(target)
+  const compiling = engine.renderer.compileAsync(engine.scene, engine.camera)
+  engine.renderer.setRenderTarget(null)
+  await compiling
+  await nextTask()
+  // The post-processing passes draw with materials of their own, outside the scene.
+  const passes = postMaterials(engine.composer)
+  if (passes.children.length) await engine.renderer.compileAsync(passes, engine.camera)
+  passes.children[0]?.geometry.dispose()
+  await nextTask()
+  // Textures upload a few at a time rather than all inside the first frame.
+  let uploaded = 0
+  for (const texture of sceneTextures(engine.scene)) {
+    engine.renderer.initTexture(texture)
+    if (++uploaded % 3 === 0) await nextTask()
+  }
+  await nextTask()
+  if (stopped) return
+  booted = true
+  if (shown) {
+    running = true
+    engine.start()
+    await afterFrame()
+  }
+  ready = true
+  post('ready')
+  if (pending) queueWorld(pending)
+  pending = null
 }

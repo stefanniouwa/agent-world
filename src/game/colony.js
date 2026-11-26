@@ -136,7 +136,14 @@ export function transcriptProgress(thread) {
 }
 
 export class Colony {
-  constructor(scene, settings, camera, renderer) {
+  /**
+   * `deferGround: true` leaves the slow ground work to the caller, so it can be spread over
+   * several tasks: nothing is laid until `onAssetsReady`, grass waits for `buildGrass`, and a
+   * roster that moves the zones leaves the ground for `settleGround`. Off, everything happens
+   * where it always has.
+   */
+  constructor(scene, settings, camera, renderer, { deferGround = false } = {}) {
+    this.deferGround = deferGround
     this.scene = scene
     this.settings = settings
     this.camera = camera
@@ -215,7 +222,7 @@ export class Colony {
     this._c2 = new THREE.Color()
     this.stats = { agents: 0, projects: 0, working: 0, waiting: 0, blocked: 0, done: 0 }
 
-    this._buildTerrain()
+    if (!deferGround) this._buildTerrain()
   }
 
   // ── terrain ─────────────────────────────────────────────────────────────────────────
@@ -280,8 +287,9 @@ export class Colony {
    * One lander per machine. `specs` is `[{ id, cell, live }]`, in a stable order; `fill` is
    * any bare island cells that join ships on the rim to the colony. A ship that is not live
    * stands dark. Moving a ship re-lays the island, the scatter and the walkable ground.
+   * Pass `{ rebuild: false }` when a `setThreads` follows straight after.
    */
-  setShips(specs, fill = []) {
+  setShips(specs, fill = [], { rebuild = true } = {}) {
     const list = specs.length ? specs : [{ id: null, cell: SHIP_CELL, live: false }]
     const before = this._shipSignature()
     this.shipSpecs = list.map((spec) => ({ id: spec.id ?? null, cell: { q: spec.cell.q, r: spec.cell.r }, live: spec.live !== false }))
@@ -290,7 +298,9 @@ export class Colony {
     while (this.ships.length < this.shipSpecs.length) this.ships.push(new Ship(this.scene, shipPosition(this.shipSpecs[this.ships.length].cell)))
     this.shipSpecs.forEach((spec, i) => this.ships[i].setLive(spec.live))
     this._settleShips()
-    if (this._shipSignature() === before) return
+    // `rebuild: false` is for a caller about to hand over a roster: the next `setThreads` sees
+    // the footprint moved and re-lays the ground once, rather than twice.
+    if (!rebuild || this._shipSignature() === before) return
     // The ground the ships stand on is part of the island's shape, so it moves with them.
     if (this.planet.shape === 'island') this._buildTerrain()
     else {
@@ -361,6 +371,16 @@ export class Colony {
 
   /** Every hex cell the colony holds, plus the ship's, in world space. */
   _footprintCells() {
+    // Asked once per grass blade and scatter throw, so it is kept until something it is made
+    // from is replaced: the zone list, or the ships and the bare cells round them.
+    const memo = this._footprintMemo
+    if (memo && memo.plots === this.plotOrder && memo.ships === this.shipSpecs && memo.fill === this.fillCells) return memo.cells
+    const cells = this._measureFootprint()
+    this._footprintMemo = { plots: this.plotOrder, ships: this.shipSpecs, fill: this.fillCells, cells }
+    return cells
+  }
+
+  _measureFootprint() {
     const list = []
     for (const plot of this.plotOrder) {
       for (const local of plot.localCenters) list.push({ x: plot.center.x + local.x, z: plot.center.z + local.z })
@@ -483,7 +503,8 @@ export class Colony {
     this.scatterGroup = createScatter(this.planet, this.settings.get('scatterDensity'), clear, 4242, (x, z) => this.onIsland(x, z))
     this.worldGroup.add(this.scatterGroup)
     this._scatterFootprint = this._plotFootprint()
-    this._buildGrass(clear)
+    if (this.deferGround) this._grassClear = clear
+    else this._buildGrass(clear)
     // The crew routes around scatter, so a new scatter is a new navigation grid.
     if (this.nav) this._rebuildNavigation()
   }
@@ -492,6 +513,26 @@ export class Colony {
    * The meadow, on worlds that have one. Kept clear of the same ground the scatter is, and
    * rebuilt with it: a plot laid over grass would have blades poking up through the deck.
    */
+  /** With `deferGround`: re-lay the scatter and the rock under zones that have moved. */
+  settleGround() {
+    if (!this._groundStale) return false
+    this._groundStale = false
+    if (this.planet.shape === 'island') this._buildTerrain()
+    else {
+      this._buildScatter()
+      if (this.island) this._syncIslandRock()
+    }
+    return true
+  }
+
+  /** With `deferGround`: grow the grass the last scatter left room for. */
+  buildGrass() {
+    if (!this._grassClear) return false
+    this._buildGrass(this._grassClear)
+    this._grassClear = null
+    return true
+  }
+
   _buildGrass(clear) {
     const apron = clear[clear.length - 1]
     if (this.grass) {
@@ -751,7 +792,9 @@ export class Colony {
     // Zones that just moved, appeared or grew are zones the scatter does not know about —
     // nor, on a floating island, the rock under them; and on an island in the sea, the
     // coast itself moves, which is the whole terrain.
-    if (this.scatterGroup && this._plotFootprint() !== this._scatterFootprint) {
+    if (this.scatterGroup && this._plotFootprint() !== this._scatterFootprint && this.deferGround) {
+      this._groundStale = true
+    } else if (this.scatterGroup && this._plotFootprint() !== this._scatterFootprint) {
       if (this.planet.shape === 'island') this._buildTerrain()
       else {
         this._buildScatter()
