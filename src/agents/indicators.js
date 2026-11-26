@@ -231,6 +231,7 @@ export class Indicators {
       // by the vertex shader above, and only this loop knows which frame each agent got.
       agent.badgeSize = sizes[n]
       agent.badgeY = centers[n * 3 + 1]
+      agent.badgeFade = fades[n]
 
       const c = BADGE_COLOR[badge] || [1, 1, 1]
       this._color.setRGB(c[0], c[1], c[2])

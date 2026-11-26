@@ -160,7 +160,7 @@ test('a bigger colony pushes the ships further out', () => {
 
 // ── name plates ─────────────────────────────────────────────────────────────────────────
 
-import { declutter, easeLift } from '../src/spectator/declutter.js'
+import { declutter, easeLift, settleTarget, sweep } from '../src/spectator/declutter.js'
 
 const overlaps = (a, b, gap = 0) =>
   Math.abs(a.x - b.x) < (a.w + b.w) / 2 + gap && Math.abs(a.y - b.y) < (a.h + b.h) / 2 + gap
@@ -196,4 +196,44 @@ test('lifts ease toward their target and settle exactly', () => {
   for (let i = 0; i < 120; i++) lift = easeLift(lift, 30, 1 / 60)
   assert.equal(lift, 30)
   assert.ok(easeLift(0, 30, 1 / 60) < 30)
+})
+
+test('plates lift clear of status badges, and the badges stay where they are', () => {
+  const badge = { x: 205, y: 300, w: 24, h: 24 }
+  const plates = [
+    { id: 'barista', x: 200, y: 300, w: 120, h: 20, priority: 3 },
+    { id: 'fleet', x: 500, y: 300, w: 50, h: 20, priority: 2 },
+  ]
+  const lifts = declutter(plates, 3, [badge])
+  const barista = { ...plates[0], y: 300 - lifts.get('barista') }
+  assert.ok(lifts.get('barista') > 0)
+  assert.ok(!overlaps(barista, badge, 2.9), 'the plate clears the badge')
+  assert.equal(lifts.get('fleet'), 0, 'a plate with no badge on it stays put')
+})
+
+test('a held lift rises at once in whole steps and comes down only after a pause', () => {
+  const state = { target: 0, lowerFor: 0 }
+  assert.equal(settleTarget(state, 9.2, 1 / 60), 12)
+  assert.equal(settleTarget(state, 10.5, 1 / 60), 12, 'a pixel of bob does not move it')
+  for (let i = 0; i < 60; i++) settleTarget(state, 0, 1 / 60)
+  assert.equal(state.target, 12, 'still held after a second')
+  for (let i = 0; i < 40; i++) settleTarget(state, 0, 1 / 60)
+  assert.equal(state.target, 0)
+  // A need hovering on the edge of a step settles on the higher step and stays there.
+  settleTarget(state, 8.1, 1 / 60)
+  for (let i = 0; i < 600; i++) settleTarget(state, i % 2 ? 7.9 : 8.05, 1 / 60)
+  assert.equal(state.target, 12)
+})
+
+test('a badge pacing back and forth ends up with one steady box over its path', () => {
+  let env = null
+  const boxes = []
+  for (let i = 0; i < 600; i++) {
+    const x = 100 + Math.sin(i / 30) * 20
+    env = sweep(env, { x, y: 50, w: 10, h: 10 }, 1 / 60)
+    if (i >= 540) boxes.push({ ...env })
+  }
+  assert.ok(Math.min(...boxes.map((b) => b.x0)) <= 81 && Math.max(...boxes.map((b) => b.x1)) >= 119, 'covers the path')
+  const spread = Math.max(...boxes.map((b) => b.x0)) - Math.min(...boxes.map((b) => b.x0))
+  assert.ok(spread < 7, `the box barely moves once settled (${spread.toFixed(2)}px)`)
 })

@@ -12,7 +12,7 @@ import { withErrands } from '../game/errands.js'
 import { acceptMessage, outbound } from './messages.js'
 import { worldToThreads } from './wire.js'
 import { islandRadius, shipLayout } from './layout.js'
-import { declutter, easeLift } from './declutter.js'
+import { declutter, easeLift, settleTarget, sweep } from './declutter.js'
 
 /**
  * The spectator build: the colony, drawn from a world the framing page sends, and nothing
@@ -262,9 +262,25 @@ function start() {
       })
       labels.set(plot.id, label)
     }
-    const lifts = declutter(plates, 3)
+    // While the view moves everything on screen moves with it, so nothing is held: the plates
+    // take whatever the layout says, and the badges' swept boxes start again.
+    const m = engine.camera.matrixWorld.elements
+    let moved = false
+    for (let i = 0; i < 16; i++) if (Math.abs(m[i] - lastView[i]) > 1e-5) moved = true
+    lastView.set(m)
+    if (moved) sweeps.clear()
+    const badges = badgeRects(w, h, p, dt)
+    // First what each plate needs on its own this frame, which decides whether a held lift
+    // may come down; then the layout itself, with every plate starting from the lift it holds.
+    const free = declutter(plates, 3, badges)
+    for (const plate of plates) {
+      const state = (labels.get(plate.id).userData.settle ||= { target: 0, lowerFor: 0 })
+      plate.minLift = settleTarget(state, free.get(plate.id) ?? 0, dt, { hold: 3, now: moved })
+    }
+    const lifts = declutter(plates, 3, badges)
     for (const [id, label] of labels) {
-      const lift = easeLift(label.userData.lift ?? 0, lifts.get(id) ?? 0, dt)
+      const wanted = Math.max(0, Math.ceil((lifts.get(id) ?? 0) / 4 - 1e-6) * 4)
+      const lift = easeLift(label.userData.lift ?? 0, wanted, dt)
       label.userData.lift = lift
       label.userData.screenOffset.y = (lift * 2) / h
     }
@@ -272,6 +288,44 @@ function start() {
   }
   /** Where the plates were last drawn, for the visual checks. */
   let shownPlates = []
+
+  /**
+   * Every status badge that is on screen and not faded out, as a rectangle in CSS pixels.
+   * Mirrors the badge shader in indicators.js: a quad of `size * (2 + dist * 0.22)` view
+   * units, lifted by half its height above its anchor over the helmet.
+   */
+  function badgeRects(w, h, p, dt) {
+    const rects = []
+    const seen = new Set()
+    for (const agent of colony.astronauts.agents) {
+      // Only bots settled at their own site. One walking across the island passes a plate in a
+      // moment, and lifting every plate it passes would keep the names bobbing for nothing.
+      if (!agent.badgeSize || agent.state !== 'at-site') continue
+      const view = bendPoint(anchor.set(agent.pos.x, agent.badgeY, agent.pos.z)).applyMatrix4(engine.camera.matrixWorldInverse)
+      const dist = -view.z
+      if (dist <= 0.01) continue
+      const t = THREE.MathUtils.smoothstep(dist, 19, 44)
+      if (1 - (agent.badgeFade ?? 0) * t < 0.35) continue
+      const scale = agent.badgeSize * (2 + dist * 0.22)
+      const rect = {
+        x: ((view.x * p[0]) / dist) * 0.5 * w + w / 2,
+        y: h / 2 - (((view.y + scale * 0.5) * p[5]) / dist) * 0.5 * h,
+        w: ((scale * p[0]) / dist) * 0.5 * w,
+        h: ((scale * p[5]) / dist) * 0.5 * h,
+      }
+      const env = sweep(sweeps.get(agent.id), rect, dt)
+      sweeps.set(agent.id, env)
+      seen.add(agent.id)
+      rects.push({ x: (env.x0 + env.x1) / 2, y: (env.y0 + env.y1) / 2, w: env.x1 - env.x0, h: env.y1 - env.y0 })
+    }
+    for (const id of [...sweeps.keys()]) if (!seen.has(id)) sweeps.delete(id)
+    shownBadges = rects
+    return rects
+  }
+  let shownBadges = []
+  /** Each badge's swept box, by agent id; see `sweep`. */
+  const sweeps = new Map()
+  const lastView = new Float32Array(16)
   let ready = false
   let pending = null
 
@@ -391,7 +445,7 @@ function start() {
 
   engine.start()
   // For poking at the world from a dev console and the visual checks. Not in the build.
-  if (import.meta.env.DEV) window.agentWorld = { engine, rig, colony, settings, select, plates: () => shownPlates }
+  if (import.meta.env.DEV) window.agentWorld = { engine, rig, colony, settings, select, plates: () => shownPlates, badges: () => shownBadges }
 
   const settle = (p) => p.then(() => null, (err) => err)
   Promise.all([settle(loadKit()), settle(loadCrew())]).then(([kitError, crewError]) => {
