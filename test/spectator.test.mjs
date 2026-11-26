@@ -157,3 +157,43 @@ test('ships stand on a ring outside the colony, apart, and never on the fill', (
 test('a bigger colony pushes the ships further out', () => {
   assert.ok(shipLayout(Array(20).fill(14), 4).ring > shipLayout([3], 4).ring)
 })
+
+// ── name plates ─────────────────────────────────────────────────────────────────────────
+
+import { declutter, easeLift } from '../src/spectator/declutter.js'
+
+const overlaps = (a, b, gap = 0) =>
+  Math.abs(a.x - b.x) < (a.w + b.w) / 2 + gap && Math.abs(a.y - b.y) < (a.h + b.h) / 2 + gap
+
+test('overlapping plates are lifted apart, the busier zone staying put', () => {
+  const plates = [
+    { id: 'portfolio', x: 400, y: 300, w: 220, h: 20, priority: 6 },
+    { id: 'barista', x: 330, y: 296, w: 120, h: 20, priority: 3 },
+    { id: 'fleet', x: 420, y: 304, w: 50, h: 20, priority: 2 },
+    { id: 'bizsec', x: 700, y: 300, w: 90, h: 20, priority: 4 },
+  ]
+  const lifts = declutter(plates, 3)
+  assert.equal(lifts.get('portfolio'), 0)
+  assert.equal(lifts.get('bizsec'), 0, 'a plate with nobody near it does not move')
+  const placed = plates.map((p) => ({ ...p, y: p.y - lifts.get(p.id) }))
+  for (let i = 0; i < placed.length; i++) {
+    assert.ok(lifts.get(placed[i].id) >= 0, 'only ever lifted, never pushed down')
+    for (let j = i + 1; j < placed.length; j++) assert.ok(!overlaps(placed[i], placed[j], 2.9), `${placed[i].id} clears ${placed[j].id}`)
+  }
+})
+
+test('the same plates give the same lifts, whatever order they arrive in', () => {
+  const plates = [
+    { id: 'a', x: 100, y: 100, w: 80, h: 20, priority: 1 },
+    { id: 'b', x: 110, y: 105, w: 80, h: 20, priority: 1 },
+    { id: 'c', x: 90, y: 95, w: 80, h: 20, priority: 5 },
+  ]
+  assert.deepEqual([...declutter(plates)].sort(), [...declutter([...plates].reverse())].sort())
+})
+
+test('lifts ease toward their target and settle exactly', () => {
+  let lift = 0
+  for (let i = 0; i < 120; i++) lift = easeLift(lift, 30, 1 / 60)
+  assert.equal(lift, 30)
+  assert.ok(easeLift(0, 30, 1 / 60) < 30)
+})

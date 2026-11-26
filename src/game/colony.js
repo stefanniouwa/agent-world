@@ -971,7 +971,7 @@ export class Colony {
       const geo = label.geometry.parameters
       const k = 0.55 + dist * 0.03
       const cx = (view.x * p[0]) / dist
-      const cy = (view.y * p[5]) / dist
+      const cy = (view.y * p[5]) / dist + (label.userData.screenOffset?.y ?? 0)
       if (Math.abs(ndcX - cx) > ((geo.width / 2) * k * p[0]) / dist) continue
       if (Math.abs(ndcY - cy) > ((geo.height / 2) * k * p[5]) / dist) continue
       bestDist = dist

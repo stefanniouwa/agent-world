@@ -6,12 +6,13 @@ import { Colony } from '../game/colony.js'
 import { PLANETS } from '../world/planet.js'
 import { loadKit } from '../world/kit.js'
 import { crewRig, loadCrew } from '../agents/crew.js'
-import { CURVE_FULL, installWorldCurve, setCurveView } from '../core/curve.js'
+import { CURVE_FULL, bendPoint, installWorldCurve, setCurveView } from '../core/curve.js'
 import { Ambience } from '../audio/ambience.js'
 import { withErrands } from '../game/errands.js'
 import { acceptMessage, outbound } from './messages.js'
 import { worldToThreads } from './wire.js'
 import { islandRadius, shipLayout } from './layout.js'
+import { declutter, easeLift } from './declutter.js'
 
 /**
  * The spectator build: the colony, drawn from a world the framing page sends, and nothing
@@ -225,6 +226,52 @@ function start() {
   // ── the world ───────────────────────────────────────────────────────────────────────
 
   const known = new Set()
+  /** Threads per zone, for which name plate gives way when two would overlap. */
+  let zoneSizes = new Map()
+
+  // ── name plates ─────────────────────────────────────────────────────────────────────
+
+  const anchor = new THREE.Vector3()
+  /**
+   * Where each visible plate lands on screen this frame, without any lift, and then the lift
+   * that keeps it clear of the others. The measure mirrors the plate's own vertex shader: the
+   * anchor is bent like the ground, and the quad grows with distance.
+   */
+  function declutterPlates(dt) {
+    const { w, h } = engine.viewport || { w: innerWidth, h: innerHeight }
+    const p = engine.camera.projectionMatrix.elements
+    const plates = []
+    const labels = new Map()
+    for (const plot of colony.plotOrder) {
+      const label = plot.label
+      if (!label?.visible || !label.userData.screenOffset) continue
+      const view = bendPoint(anchor.copy(label.position)).applyMatrix4(engine.camera.matrixWorldInverse)
+      const dist = -view.z
+      if (dist <= 0.01) continue
+      const k = 0.55 + dist * 0.03
+      const geo = label.geometry.parameters
+      // The plate's canvas pads the text all round; only the lettering and its dot need room.
+      plates.push({
+        id: plot.id,
+        x: ((view.x * p[0]) / dist) * 0.5 * w + w / 2,
+        y: h / 2 - ((view.y * p[5]) / dist) * 0.5 * h,
+        // The canvas pads 14 of its 62 pixels of height on every side; see `createLabel`.
+        w: (((geo.width - (geo.height * 28) / 62) * k * p[0]) / dist) * 0.5 * w,
+        h: ((geo.height * k * p[5]) / dist) * 0.5 * h * 0.62,
+        priority: zoneSizes.get(plot.id) || 0,
+      })
+      labels.set(plot.id, label)
+    }
+    const lifts = declutter(plates, 3)
+    for (const [id, label] of labels) {
+      const lift = easeLift(label.userData.lift ?? 0, lifts.get(id) ?? 0, dt)
+      label.userData.lift = lift
+      label.userData.screenOffset.y = (lift * 2) / h
+    }
+    shownPlates = plates.map((plate) => ({ ...plate, y: plate.y - (labels.get(plate.id).userData.lift ?? 0) }))
+  }
+  /** Where the plates were last drawn, for the visual checks. */
+  let shownPlates = []
   let ready = false
   let pending = null
 
@@ -234,6 +281,7 @@ function start() {
     const list = withErrands(threads)
     const sizes = new Map()
     for (const t of list) sizes.set(t.project, (sizes.get(t.project) || 0) + 1)
+    zoneSizes = sizes
     const layout = shipLayout([...sizes.values()], ships.length)
     ring = layout.ring
     colony.setShips(
@@ -335,6 +383,7 @@ function start() {
         fog.far = fog.near + colony.planet.fog.far - colony.planet.fog.near
       }
       engine.setFocusDistance(rig.distance)
+      declutterPlates(dt)
       if (selectedId && !colony.agentFor(selectedId)) select(null, { notify: true })
       ambience.update(dt, engine.camera, soundWorld())
     },
@@ -342,7 +391,7 @@ function start() {
 
   engine.start()
   // For poking at the world from a dev console and the visual checks. Not in the build.
-  if (import.meta.env.DEV) window.agentWorld = { engine, rig, colony, settings, select }
+  if (import.meta.env.DEV) window.agentWorld = { engine, rig, colony, settings, select, plates: () => shownPlates }
 
   const settle = (p) => p.then(() => null, (err) => err)
   Promise.all([settle(loadKit()), settle(loadCrew())]).then(([kitError, crewError]) => {

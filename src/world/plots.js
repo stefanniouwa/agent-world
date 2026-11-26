@@ -749,16 +749,22 @@ export function createLabel(text, accent, pixelRatio = 4, size = 1) {
     toneMapped: false,
     opacity: 0,
   })
+  /** A nudge in clip space, so a plate can step aside from another one. Zero unless set. */
+  const screenOffset = { value: new THREE.Vector2() }
   mat.onBeforeCompile = (shader) => {
     withCurve(shader)
-    shader.vertexShader = shader.vertexShader.replace(
+    shader.uniforms.uScreenOffset = screenOffset
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', '#include <common>\nuniform vec2 uScreenOffset;')
+      .replace(
       '#include <project_vertex>',
       // The anchor is bent like the ground under it, so a plate stays over its zone when the
       // world curves away; the quad itself is then built flat in view space as before.
       `vec4 mvPosition = viewMatrix * vec4( bcBend( ( modelMatrix * vec4( 0.0, 0.0, 0.0, 1.0 ) ).xyz ), 1.0 );
        float dist = -mvPosition.z;
        mvPosition.xy += position.xy * ( 0.55 + dist * 0.03 );
-       gl_Position = projectionMatrix * mvPosition;`
+       gl_Position = projectionMatrix * mvPosition;
+       gl_Position.xy += uScreenOffset * gl_Position.w;`
     )
   }
   const mesh = new THREE.Mesh(geo, mat)
@@ -767,6 +773,8 @@ export function createLabel(text, accent, pixelRatio = 4, size = 1) {
   mesh.visible = false
   // After bloom and tilt-shift, with the badges — see the engine's overlay pass.
   mesh.layers.set(OVERLAY_LAYER)
+  /** In normalised device units, the same as the hit test reads it in. */
+  mesh.userData.screenOffset = screenOffset.value
   mesh.userData.dispose = () => {
     texture.dispose()
     geo.dispose()
