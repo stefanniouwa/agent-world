@@ -1,0 +1,39 @@
+name: Spectator release
+
+# Builds the spectator world for stefannio.tech/lab and attaches it to a
+# GitHub release. The site downloads a pinned release by tag and hash.
+# SPECTATOR.md has the contract.
+
+on:
+  push:
+    tags: ['spectator-v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci
+      - run: npm test
+      - run: npm run build:spectator
+
+      - name: Pack and release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          tar -czf agent-world-spectator.tar.gz -C dist-spectator .
+          sum=$(sha256sum agent-world-spectator.tar.gz | cut -d' ' -f1)
+          size=$(du -h agent-world-spectator.tar.gz | cut -f1)
+          gh release create "$TAG" agent-world-spectator.tar.gz \
+            --title "$TAG" --notes "Spectator build. SHA-256 $sum, $size."
+          echo "SHA-256: \`$sum\` ($size)" >> "$GITHUB_STEP_SUMMARY"
