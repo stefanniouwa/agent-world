@@ -7,7 +7,8 @@ import { createHash } from 'node:crypto'
 export const MACHINES = ['mac-mini', 'macbook-air', 'cloud-vm', 'grok-vm']
 export const PRIVATE = 'Private work'
 export const MAX_AGENTS = 40
-const WINDOW_MS = 14 * 24 * 60 * 60 * 1000
+const DAY_MS = 24 * 60 * 60 * 1000
+const WINDOW_MS = 14 * DAY_MS
 /** A failure older than this is history, not a slumped bot. */
 const ERROR_MS = 24 * 60 * 60 * 1000
 
@@ -27,13 +28,28 @@ export function agentId(machine, salt, threadId) {
   return 'a_' + createHash('sha256').update(`${salt}:${machine}:${threadId}`).digest('hex').slice(0, 16)
 }
 
-export function buildSnapshot({ machine, salt, projects, threads, runs, waiting, subagents, now }) {
+/** T3's default for "Days of inactivity before auto-settle". The setting lives in the app, out of the collector's reach. */
+export const AUTO_SETTLE_DAYS = 3
+
+export function buildSnapshot({
+  machine,
+  salt,
+  projects,
+  threads,
+  runs,
+  waiting,
+  subagents,
+  pullRequests = [],
+  autoSettleDays = AUTO_SETTLE_DAYS,
+  now,
+}) {
   if (!MACHINES.includes(machine)) throw new Error(`Unknown machine "${machine}"`)
   if (!salt || salt.length < 16) throw new Error('Set a salt of at least 16 characters')
 
   const runById = new Map(runs.map((r) => [r.id, r]))
   const waitingIds = new Set(waiting.map((w) => w.id))
   const subagentsById = new Map(subagents.map((s) => [s.id, Number(s.n) || 0]))
+  const prStateById = new Map(pullRequests.map((p) => [p.id, p.state]))
 
   const agents = []
   for (const t of threads) {
@@ -48,9 +64,14 @@ export function buildSnapshot({ machine, salt, projects, threads, runs, waiting,
     else if (run && ACTIVE_RUNS.has(run.status)) state = 'working'
     else if (run?.status === 'failed' && now - ms(run.at) < ERROR_MS) state = 'errored'
 
-    // A thread Stefan settled in T3 is finished work. It stays on the island, asleep, unless it
-    // is working or waiting for him again.
-    if (t.settled === 'settled' && state !== 'working' && state !== 'waiting') state = 'settled'
+    // Finished work, read the way T3's sidebar settles a thread: Stefan settled it, its PR was
+    // merged or closed, or it has been quiet past the auto-settle window. "active" is T3's pin
+    // that keeps a thread open. Busy work is never finished. It stays on the island, asleep.
+    const pr = prStateById.get(t.id)
+    const settled =
+      t.settled === 'settled' ||
+      (t.settled !== 'active' && (pr === 'merged' || pr === 'closed' || now - since > autoSettleDays * DAY_MS))
+    if (settled && state !== 'working' && state !== 'waiting') state = 'settled'
 
     agents.push({
       id: agentId(machine, salt, t.id),

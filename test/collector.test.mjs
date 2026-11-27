@@ -78,3 +78,27 @@ test('marks settled threads as settled unless they are busy again, after the ope
   assert.deepEqual(s.agents.slice(2).map((a) => a.state), ['idle', 'settled'])
   assert.deepEqual(s.agents.slice(0, 2).map((a) => a.state).sort(), ['waiting', 'working'])
 })
+
+test('reads a thread as done the way T3 settles it', () => {
+  const s = buildSnapshot({
+    ...base,
+    threads: [
+      thread('fresh'),
+      thread('merged'),
+      thread('closed'),
+      thread('quiet', { updatedAt: iso(60 * 24 * 4) }),
+      thread('quiet-but-pinned', { updatedAt: iso(60 * 24 * 4), settled: 'active' }),
+      thread('merged-but-running'),
+    ],
+    runs: [{ id: 'merged-but-running', status: 'running', at: iso(1), turns: 2 }],
+    waiting: [],
+    subagents: [],
+    pullRequests: [
+      { id: 'merged', state: 'merged' },
+      { id: 'closed', state: 'closed' },
+      { id: 'merged-but-running', state: 'merged' },
+    ],
+  })
+  const states = s.agents.map((a) => a.state).sort()
+  assert.deepEqual(states, ['idle', 'idle', 'settled', 'settled', 'settled', 'working'])
+})

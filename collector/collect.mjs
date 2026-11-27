@@ -69,6 +69,17 @@ const waiting = db
   .prepare(`SELECT DISTINCT thread_id AS id FROM orchestration_v2_projection_runtime_requests WHERE status = 'pending'`)
   .all()
 
+// Only each thread's latest PR state, never its title or branch.
+const pullRequests = db
+  .prepare(
+    `SELECT thread_id AS id, json_extract(snapshot_json, '$.state') AS state
+       FROM (SELECT thread_id, snapshot_json,
+                    ROW_NUMBER() OVER (PARTITION BY thread_id ORDER BY linked_at DESC) AS n
+               FROM projection_thread_pull_requests)
+      WHERE n = 1`
+  )
+  .all()
+
 const subagents = db
   .prepare(
     `SELECT thread_id AS id, COUNT(*) AS n FROM orchestration_v2_projection_subagents
@@ -86,6 +97,8 @@ const snapshot = buildSnapshot({
   runs,
   waiting,
   subagents,
+  pullRequests,
+  ...(Number.isFinite(config.autoSettleDays) ? { autoSettleDays: config.autoSettleDays } : {}),
   now: Date.now(),
 })
 
