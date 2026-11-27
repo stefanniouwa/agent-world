@@ -77,9 +77,23 @@ function sceneTextures(scene) {
  * A throwaway scene holding one quad per material the post-processing passes own, so they
  * can be compiled ahead of the first frame like everything else.
  */
-function postMaterials(composer) {
+function postMaterials(composer, renderer) {
   const scene = new THREE.Scene()
+  // A program is keyed on the attributes it draws, and three's full-screen triangle has
+  // only a position and a uv.
   const geometry = new THREE.PlaneGeometry(1, 1)
+  geometry.deleteAttribute('normal')
+  // OutputPass picks its tone mapping and sRGB defines on its first render. Running that
+  // without the draw gives its material the defines it will really compile with.
+  for (const pass of composer?.passes || []) {
+    const quad = pass.isOutputPass ? pass._fsQuad : null
+    if (!quad) continue
+    const draw = quad.render
+    quad.render = () => {}
+    pass.render(renderer, null, composer.readBuffer)
+    quad.render = draw
+  }
+  renderer.setRenderTarget(null)
   const seen = new Set()
   const take = (value) => {
     if (value?.isMaterial && !seen.has(value)) {
@@ -632,21 +646,31 @@ async function start() {
   await nextTask()
   colony.buildGrass()
   await nextTask()
+  // The sky's light first: an environment map changes every lit material's program, so
+  // compiling before it exists would leave the first frame to compile them all again.
+  colony.sky.prepareEnvironment()
+  await nextTask()
   // Every material compiles now, in parallel where the driver allows, rather than all at
-  // once inside the first frame.
-  // Compiled against the buffer the scene is really drawn into: a program built for the
-  // canvas (tone mapped, sRGB) is not the one the post chain's linear buffer asks for.
-  const target = engine.composer?.readBuffer ?? null
-  engine.renderer.setRenderTarget(target)
-  const compiling = engine.renderer.compileAsync(engine.scene, engine.camera)
-  engine.renderer.setRenderTarget(null)
-  await compiling
+  // once inside the first frame. Each program is keyed on the buffer it draws into, so the
+  // scene and the passes compile against the post chain's linear buffer, and the passes
+  // once more against the screen, which the last of them draws to.
+  const linear = engine.composer?.readBuffer ?? null
+  const passes = postMaterials(engine.composer, engine.renderer)
+  const compileFor = (scene, target) => {
+    engine.renderer.setRenderTarget(target)
+    const compiling = engine.renderer.compileAsync(scene, engine.camera)
+    engine.renderer.setRenderTarget(null)
+    return compiling
+  }
+  await compileFor(engine.scene, linear)
   await nextTask()
-  // The post-processing passes draw with materials of their own, outside the scene.
-  const passes = postMaterials(engine.composer)
-  if (passes.children.length) await engine.renderer.compileAsync(passes, engine.camera)
+  if (passes.children.length) {
+    await compileFor(passes, linear)
+    await nextTask()
+    if (linear) await compileFor(passes, null)
+    await nextTask()
+  }
   passes.children[0]?.geometry.dispose()
-  await nextTask()
   // Textures upload a few at a time rather than all inside the first frame.
   let uploaded = 0
   for (const texture of sceneTextures(engine.scene)) {
@@ -654,6 +678,14 @@ async function start() {
     if (++uploaded % 3 === 0) await nextTask()
   }
   await nextTask()
+  // One draw of the scene on its own, which renders the sun's shadow map and builds the
+  // shadow programs three keeps to itself, so the first real frame only has to draw.
+  if (engine.renderer.shadowMap.enabled) {
+    engine.renderer.setRenderTarget(linear)
+    engine.renderer.render(engine.scene, engine.camera)
+    engine.renderer.setRenderTarget(null)
+    await nextTask()
+  }
   if (stopped) return
   booted = true
   if (shown) {

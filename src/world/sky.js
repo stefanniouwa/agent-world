@@ -193,6 +193,11 @@ export class Sky {
     this._envTarget = null
   }
 
+  /** Prefilter the sky's light now, so materials can be compiled with the environment they will draw with. */
+  prepareEnvironment() {
+    this._refreshEnvironment(true)
+  }
+
   _refreshEnvironment(force = false) {
     if (!this.pmrem) return
     if (!this.settings.get('ibl')) {
