@@ -45,6 +45,7 @@ const threads = db
             t.default_provider AS provider,
             json_extract(t.payload_json, '$.modelSelection.model') AS model,
             json_extract(t.payload_json, '$.lineage.relationshipToParent') AS relationship,
+            json_extract(t.payload_json, '$.settledOverride') AS settled,
             p.workspace_root AS root
        FROM orchestration_v2_projection_threads t
        LEFT JOIN projection_projects p USING (project_id)

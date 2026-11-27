@@ -19,7 +19,7 @@ Only these fields, per agent. No title, prompt, path, branch, transcript or thre
 | `project` | string | A display name from the machine's allowlist, or `Private work` |
 | `harness` | string | `claude-code`, `codex`, `cursor` or `other` |
 | `model` | string | The model id, or `''` |
-| `state` | string | `working`, `waiting`, `idle` or `errored` |
+| `state` | string | `working`, `waiting`, `idle`, `errored` or `settled`, a thread Stefan settled in T3. The island draws `settled` as idle. |
 | `since` | number | Last activity, epoch ms |
 | `createdAt` | number | Epoch ms |
 | `turns` | number | How many turns the thread has run. Sets how finished its building looks |

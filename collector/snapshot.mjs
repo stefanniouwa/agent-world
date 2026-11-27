@@ -48,6 +48,10 @@ export function buildSnapshot({ machine, salt, projects, threads, runs, waiting,
     else if (run && ACTIVE_RUNS.has(run.status)) state = 'working'
     else if (run?.status === 'failed' && now - ms(run.at) < ERROR_MS) state = 'errored'
 
+    // A thread Stefan settled in T3 is finished work. It stays on the island, asleep, unless it
+    // is working or waiting for him again.
+    if (t.settled === 'settled' && state !== 'working' && state !== 'waiting') state = 'settled'
+
     agents.push({
       id: agentId(machine, salt, t.id),
       project: Object.hasOwn(projects, folder(t.root)) ? projects[folder(t.root)] : PRIVATE,
@@ -61,9 +65,10 @@ export function buildSnapshot({ machine, salt, projects, threads, runs, waiting,
     })
   }
 
-  // Busy agents first, then the most recent, so the cap never hides one that is working.
-  const busy = (a) => (a.state === 'working' || a.state === 'waiting' ? 1 : 0)
-  agents.sort((a, b) => busy(b) - busy(a) || b.since - a.since)
+  // Busy agents first, then open ones, then the most recent, so the cap never hides one that
+  // is working and settled threads give way to open ones.
+  const rank = (a) => (a.state === 'working' || a.state === 'waiting' ? 2 : a.state === 'settled' ? 0 : 1)
+  agents.sort((a, b) => rank(b) - rank(a) || b.since - a.since)
 
   return { v: 1, machine, sentAt: now, agents: agents.slice(0, MAX_AGENTS) }
 }

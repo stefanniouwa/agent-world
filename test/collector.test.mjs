@@ -61,3 +61,20 @@ test('refuses an unknown machine or a short salt', () => {
   assert.throws(() => buildSnapshot({ ...base, machine: 'srv1', threads: [], runs: [], waiting: [], subagents: [] }))
   assert.throws(() => buildSnapshot({ ...base, salt: 'short', threads: [], runs: [], waiting: [], subagents: [] }))
 })
+
+test('marks settled threads as settled unless they are busy again, after the open ones', () => {
+  const s = buildSnapshot({
+    ...base,
+    threads: [
+      thread('open'),
+      thread('done', { settled: 'settled' }),
+      thread('done-but-running', { settled: 'settled' }),
+      thread('done-but-asking', { settled: 'settled' }),
+    ],
+    runs: [{ id: 'done-but-running', status: 'running', at: iso(1), turns: 4 }],
+    waiting: [{ id: 'done-but-asking' }],
+    subagents: [],
+  })
+  assert.deepEqual(s.agents.slice(2).map((a) => a.state), ['idle', 'settled'])
+  assert.deepEqual(s.agents.slice(0, 2).map((a) => a.state).sort(), ['waiting', 'working'])
+})
