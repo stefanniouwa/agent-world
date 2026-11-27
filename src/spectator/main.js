@@ -121,12 +121,14 @@ else {
 
 async function start() {
   const touch = window.matchMedia('(pointer: coarse)').matches
-  const maxPixelRatio = touch ? 1.5 : 2
+  // Stefan compared the presets on 27 November 2026 and chose Balanced at 2x for phones and
+  // High for everything else. The governor (`autoQuality`) still steps a device down when it
+  // cannot keep up, so the preset is a ceiling, not a promise.
+  const maxPixelRatio = 2
   const settings = new Settings({ persist: false })
-  settings.applyPreset('low')
-  // The low preset draws at 70% of the display. On a 1x screen that is below one buffer pixel
-  // per CSS pixel and the whole island goes soft, so it never starts under that. The governor
-  // still drops it on a machine that cannot keep up.
+  settings.applyPreset(touch ? 'balanced' : 'high')
+  // Never start under one buffer pixel per CSS pixel, or the whole island goes soft. The
+  // governor still drops it on a machine that cannot keep up.
   const dpr = Math.min(window.devicePixelRatio || 1, maxPixelRatio)
   settings.values.renderScale = Math.max(settings.values.renderScale, Math.min(1, 1 / dpr))
   const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches
