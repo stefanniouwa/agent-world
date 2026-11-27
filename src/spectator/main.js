@@ -8,6 +8,7 @@ import { loadKit } from '../world/kit.js'
 import { crewRig, loadCrew } from '../agents/crew.js'
 import { CURVE_FULL, bendPoint, installWorldCurve, setCurveView } from '../core/curve.js'
 import { Ambience } from '../audio/ambience.js'
+import { createMusic, EFFECTS_UNDER_MUSIC } from './music.js'
 import { withErrands } from '../game/errands.js'
 import { acceptMessage, outbound } from './messages.js'
 import { worldToThreads } from './wire.js'
@@ -127,6 +128,8 @@ async function start() {
   const dpr = Math.min(window.devicePixelRatio || 1, maxPixelRatio)
   settings.values.renderScale = Math.max(settings.values.renderScale, Math.min(1, 1 / dpr))
   const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+  // What the effects bus goes back to if the music cannot play.
+  const ambientEffects = settings.values.effectsVolume
   Object.assign(settings.values, {
     planet: 'sky',
     autoQuality: true,
@@ -138,6 +141,8 @@ async function start() {
     showFps: false,
     showLabels: true,
     reducedMotion: reduced,
+    // The work sounds sit a little under the music.
+    effectsVolume: EFFECTS_UNDER_MUSIC,
   })
 
   installWorldCurve()
@@ -171,9 +176,23 @@ async function start() {
   // The frame is a slice of a page, not a whole window, so the names are drawn larger.
   colony.labelSize = touch ? 1.6 : 1.9
 
+  // Music plays where the island's wind and birds would. The ambience still carries the work
+  // sounds, and its beds and birds only come back if the track cannot load.
   const ambience = new Ambience(settings, { manifest: false })
-  ambience.setPlanet(colony.planet)
-  colony.onSound = (name, x, y, z) => ambience.play(name, { x, y, z, kind: colony.fauna.flock?.kind })
+  let ambient = false
+  const music = createMusic({
+    url: import.meta.env.BASE_URL + 'audio/exploration-theme.mp3',
+    onFail(err) {
+      console.warn(`[music] could not play the track (${err?.message || err}); the island's own sound plays instead`)
+      ambient = true
+      settings.set('effectsVolume', ambientEffects)
+      ambience.setPlanet(colony.planet)
+    },
+  })
+  colony.onSound = (name, x, y, z) => {
+    if (name === 'bird-call' && !ambient) return
+    ambience.play(name, { x, y, z, kind: colony.fauna.flock?.kind })
+  }
 
   // ── framing ─────────────────────────────────────────────────────────────────────────
 
@@ -501,6 +520,7 @@ async function start() {
       case 'sound':
         settings.set('sound', data.on)
         if (data.on) ambience.unlock()
+        music.setOn(data.on, ambience.ctx, ambience.master)
         break
       case 'visible':
         setVisible(data.on)

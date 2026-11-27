@@ -23,3 +23,7 @@ cuts a `[start, end]` window in seconds.
 This folder is gitignored apart from this file, because sample libraries — Splice included —
 license their sounds for use *in* a work, not for redistribution on their own. Sounds under
 CC0 are fine to commit; add them to `CREDITS.md` if you do.
+
+One file here is committed: `exploration-theme.mp3`, the spectator build's music, which is
+CC0 and credited in `CREDITS.md`. It is not a sound in the registry and no manifest names it.
+`src/spectator/music.js` loads it on its own the first time a visitor turns sound on.

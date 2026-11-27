@@ -2,7 +2,7 @@
 
 Agent world is a fork of [Bot Crossing](https://github.com/Station-Sciences/bot-crossing) by Jarren Rocks, under its MIT licence. Bot Crossing shows the coding agents on your own machine and lets you act on them. This fork adds a spectator build that only watches, for a public page: stefannio.tech/lab.
 
-The spectator build has no server, reads no files and makes no requests of its own. The page that frames it sends it the world, and it draws what it is sent.
+The spectator build has no server, reads no files and requests nothing beyond its own bundled files. The page that frames it sends it the world, and it draws what it is sent.
 
 ## The two halves
 
@@ -51,7 +51,7 @@ The page sends:
 - `{ type: 'focus', id }` to fly to one agent
 - `{ type: 'zone', project }` to clear any selection and fly to that project's zone, far enough back to see all of it. `project` is the zone's name as the world gives it, 1 to 60 characters. A project with no zone on the island is ignored
 - `{ type: 'deselect' }`
-- `{ type: 'sound', on }`
+- `{ type: 'sound', on }`. The first `on` downloads the music, `audio/exploration-theme.mp3` in the build, about 1.6 MB. Nothing fetches it before then. The music fades in over 2 seconds and loops in place of the island's wind and birds, with the work sounds a little under it. If the track cannot load, the island's own wind and birds play instead
 - `{ type: 'visible', on }`, false while the frame is off screen or the tab is hidden, so the world stops drawing
 
 The world sends:

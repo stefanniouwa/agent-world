@@ -1,4 +1,4 @@
-import { copyFileSync, renameSync } from 'node:fs'
+import { copyFileSync, mkdirSync, renameSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { defineConfig } from 'vite'
 import { apiMiddleware } from './server/api.mjs'
@@ -27,6 +27,10 @@ const spectatorOutput = (outDir) => ({
     }
     copyFileSync('public/assets/CREDITS.md', resolve(outDir, 'assets/CREDITS.md'))
     copyFileSync('LICENSE', resolve(outDir, 'LICENSE.txt'))
+    // The music, fetched only once a visitor turns sound on. See src/spectator/music.js.
+    mkdirSync(resolve(outDir, 'audio'), { recursive: true })
+    copyFileSync('public/audio/exploration-theme.mp3', resolve(outDir, 'audio/exploration-theme.mp3'))
+    copyFileSync('CREDITS.md', resolve(outDir, 'audio/CREDITS.md'))
   },
 })
 
@@ -37,7 +41,8 @@ export default defineConfig(({ mode, command }) => {
       // Relative, so the build runs from whatever folder the site serves it from.
       base: './',
       // The dev server serves the models as they are; the build writes compressed ones itself
-      // and leaves out everything else in public/ (sound overrides, the unused HDR).
+      // and leaves out everything else in public/ (sound overrides, the unused HDR) apart from the
+      // music, which it copies too.
       publicDir: command === 'serve' ? 'public' : false,
       server: { port: Number(process.env.PORT) || 5276, strictPort: false },
       build: {
