@@ -86,8 +86,8 @@ test('reads a thread as done the way T3 settles it', () => {
       thread('fresh'),
       thread('merged'),
       thread('closed'),
-      thread('quiet', { updatedAt: iso(60 * 24 * 4) }),
-      thread('quiet-but-pinned', { updatedAt: iso(60 * 24 * 4), settled: 'active' }),
+      thread('quiet', { createdAt: iso(60 * 24 * 5), updatedAt: iso(60 * 24 * 4) }),
+      thread('quiet-but-pinned', { createdAt: iso(60 * 24 * 5), updatedAt: iso(60 * 24 * 4), settled: 'active' }),
       thread('merged-but-running'),
     ],
     runs: [{ id: 'merged-but-running', status: 'running', at: iso(1), turns: 2 }],
@@ -101,4 +101,41 @@ test('reads a thread as done the way T3 settles it', () => {
   })
   const states = s.agents.map((a) => a.state).sort()
   assert.deepEqual(states, ['idle', 'idle', 'settled', 'settled', 'settled', 'working'])
+})
+
+test('a thread whose last run failed today but whose latest PR is closed is settled', () => {
+  const s = buildSnapshot({
+    ...base,
+    threads: [thread('failed-and-closed'), thread('failed')],
+    runs: [
+      { id: 'failed-and-closed', status: 'failed', at: iso(60), turns: 3 },
+      { id: 'failed', status: 'failed', at: iso(60), turns: 3 },
+    ],
+    waiting: [],
+    subagents: [],
+    pullRequests: [{ id: 'failed-and-closed', state: 'closed' }],
+  })
+  assert.deepEqual(s.agents.map((a) => a.state).sort(), ['errored', 'settled'])
+})
+
+test('counts quiet days from the last message or run, as T3 does, not from the thread row', () => {
+  const old = iso(60 * 24 * 4)
+  const s = buildSnapshot({
+    ...base,
+    threads: [
+      // Renamed or linked today, so its row is fresh, but nobody has written in it for four days.
+      thread('touched', { createdAt: iso(60 * 24 * 6), updatedAt: iso(5), userMessageAt: old }),
+      thread('asked-today', { createdAt: iso(60 * 24 * 6), updatedAt: old, userMessageAt: iso(60) }),
+      thread('ran-today', { createdAt: iso(60 * 24 * 6), updatedAt: old, userMessageAt: old }),
+    ],
+    runs: [
+      { id: 'touched', status: 'completed', at: old, requestedAt: old, startedAt: old, completedAt: old, turns: 2 },
+      { id: 'ran-today', status: 'completed', at: old, requestedAt: old, startedAt: iso(30), completedAt: null, turns: 4 },
+    ],
+    waiting: [],
+    subagents: [],
+  })
+  // Turns tell them apart: touched ran 2, asked-today none, ran-today 4.
+  const byTurns = Object.fromEntries(s.agents.map((a) => [a.turns, a.state]))
+  assert.deepEqual(byTurns, { 0: 'idle', 2: 'settled', 4: 'idle' })
 })

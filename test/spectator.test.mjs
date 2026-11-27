@@ -83,6 +83,25 @@ test('every agent of a machine that is not live sleeps, with no errands out', ()
   assert.ok(now - air.lastActivityAt >= ASLEEP_AGE)
 })
 
+test('a settled agent sleeps while the rest of its live machine stays awake', () => {
+  const world = {
+    v: 1,
+    machines: [{ id: 'mac-mini', live: true }],
+    agents: [
+      agent({ id: 'a_2222222222222222', state: 'idle', subagents: 0 }),
+      agent({ id: 'a_3333333333333333', state: 'settled', subagents: 0 }),
+    ],
+  }
+  const { threads } = worldToThreads(world, now)
+  const [idle, settled] = threads
+  // The colony puts a bot to sleep when its last activity is past its three-day line.
+  assert.equal(idle.lastActivityAt, now - 60_000)
+  assert.equal(settled.title, 'Claude Code agent, done')
+  assert.deepEqual([settled.running, settled.unread, settled.hasError], [false, false, false])
+  assert.ok(now - settled.lastActivityAt >= ASLEEP_AGE)
+  assert.ok(ASLEEP_AGE > 3 * 24 * 60 * 60 * 1000)
+})
+
 test('a world with no machines still has one ship, dark', () => {
   assert.deepEqual(worldToThreads({ v: 1, machines: [], agents: [] }, now).ships, [{ id: null, live: false }])
 })

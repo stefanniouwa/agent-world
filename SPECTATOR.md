@@ -19,13 +19,15 @@ Only these fields, per agent. No title, prompt, path, branch, transcript or thre
 | `project` | string | A display name from the machine's allowlist, or `Private work` |
 | `harness` | string | `claude-code`, `codex`, `cursor` or `other` |
 | `model` | string | The model id, or `''` |
-| `state` | string | `working`, `waiting`, `idle`, `errored` or `settled`, a thread Stefan settled in T3. The island draws `settled` as idle. |
+| `state` | string | `working`, `waiting`, `idle`, `errored` or `settled`. A thread is `settled` when Stefan settled it in T3, its latest PR was merged or closed, or nobody has written in it or run it for 3 days, unless he pinned it active. A thread that is working or waiting is never settled. The island draws a settled bot asleep. |
 | `since` | number | Last activity, epoch ms |
 | `createdAt` | number | Epoch ms |
 | `turns` | number | How many turns the thread has run. Sets how finished its building looks |
 | `subagents` | number | Subagents out right now |
 
 A snapshot is `{ v: 1, machine, sentAt, agents }`. `machine` is `mac-mini`, `macbook-air`, `cloud-vm` or `grok-vm`, and each has its own push key.
+
+The site rejects a whole snapshot that holds a state it does not know, so that machine stops updating and soon shows as not live. Deploy a site that accepts a new state before any machine's collector sends it.
 
 ## The world the page sends
 
@@ -34,7 +36,7 @@ A snapshot is `{ v: 1, machine, sentAt, agents }`. `machine` is `mac-mini`, `mac
   v: 1,
   generatedAt,      // epoch ms
   machines: [{ id, name, live, lastSeenAt }],  // lastSeenAt is null if it never pushed
-  agents: [{ ...agent, machine }],             // every agent of a machine that is not live is idle
+  agents: [{ ...agent, machine }],             // every agent of a machine that is not live is drawn asleep
 }
 ```
 

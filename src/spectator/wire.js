@@ -17,11 +17,12 @@ const STATE_TITLE = {
   waiting: 'waiting for a reply',
   idle: 'idle',
   errored: 'hit an error',
+  settled: 'done',
 }
 
 const STATES = new Set(Object.keys(STATE_TITLE))
 
-/** Older than the colony's three-day line, so a thread on a dark machine is asleep. */
+/** Older than the colony's three-day line, so a thread on a dark machine, or a settled one, is asleep. */
 export const ASLEEP_AGE = 3 * 24 * 60 * 60 * 1000 + 60 * 1000
 
 /** More subagents than this on one thread is noise, not information. */
@@ -69,8 +70,9 @@ export function toThread(agent, { live = true, now = Date.now() } = {}) {
     unread: state === 'waiting',
     hasError: state === 'errored',
     prState: null,
-    // A machine that is not live has gone quiet, and its crew sleeps.
-    lastActivityAt: live ? since : Math.min(since, now - ASLEEP_AGE),
+    // A machine that is not live has gone quiet, and its crew sleeps. So does a settled thread,
+    // while the rest of its machine stays awake.
+    lastActivityAt: live && state !== 'settled' ? since : Math.min(since, now - ASLEEP_AGE),
     createdAt: time(agent.createdAt, since),
     sizeBytes: turnsToBytes(agent.turns),
     subagents: Array.from({ length: subagents }, (_, i) => ({ id: `s${i}`, task: '', lastActivityAt: since })),

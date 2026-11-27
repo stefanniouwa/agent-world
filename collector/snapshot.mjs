@@ -31,6 +31,16 @@ export function agentId(machine, salt, threadId) {
 /** T3's default for "Days of inactivity before auto-settle". The setting lives in the app, out of the collector's reach. */
 export const AUTO_SETTLE_DAYS = 3
 
+/**
+ * When a thread last had activity, the way T3's auto-settle reads it: the latest user message,
+ * or the latest run being asked for, starting or finishing, else when the thread was made. Not
+ * the thread's updatedAt, which also moves when it is renamed, settled or linked to a PR.
+ */
+export function activityAt(thread, run) {
+  const latest = Math.max(ms(thread.userMessageAt), ms(run?.requestedAt), ms(run?.startedAt), ms(run?.completedAt))
+  return latest || ms(thread.createdAt)
+}
+
 export function buildSnapshot({
   machine,
   salt,
@@ -65,12 +75,12 @@ export function buildSnapshot({
     else if (run?.status === 'failed' && now - ms(run.at) < ERROR_MS) state = 'errored'
 
     // Finished work, read the way T3's sidebar settles a thread: Stefan settled it, its PR was
-    // merged or closed, or it has been quiet past the auto-settle window. "active" is T3's pin
+    // merged or closed, or it has had no activity for the auto-settle window. "active" is T3's pin
     // that keeps a thread open. Busy work is never finished. It stays on the island, asleep.
     const pr = prStateById.get(t.id)
     const settled =
       t.settled === 'settled' ||
-      (t.settled !== 'active' && (pr === 'merged' || pr === 'closed' || now - since > autoSettleDays * DAY_MS))
+      (t.settled !== 'active' && (pr === 'merged' || pr === 'closed' || now - activityAt(t, run) > autoSettleDays * DAY_MS))
     if (settled && state !== 'working' && state !== 'waiting') state = 'settled'
 
     agents.push({

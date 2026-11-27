@@ -36,7 +36,7 @@ db.exec('PRAGMA busy_timeout = 5000')
 const since = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString()
 
 // Only ids, times, statuses, the provider, the model and the project's folder. Never the title,
-// the payload's free text, the worktree path or the branch.
+// the payload's free text, the worktree path or the branch. A user message gives only its time.
 const threads = db
   .prepare(
     `SELECT t.thread_id AS id,
@@ -46,6 +46,8 @@ const threads = db
             json_extract(t.payload_json, '$.modelSelection.model') AS model,
             json_extract(t.payload_json, '$.lineage.relationshipToParent') AS relationship,
             json_extract(t.payload_json, '$.settledOverride') AS settled,
+            (SELECT MAX(m.updated_at) FROM orchestration_v2_projection_messages m
+              WHERE m.thread_id = t.thread_id AND m.role = 'user') AS userMessageAt,
             p.workspace_root AS root
        FROM orchestration_v2_projection_threads t
        LEFT JOIN projection_projects p USING (project_id)
@@ -55,8 +57,10 @@ const threads = db
 
 const runs = db
   .prepare(
-    `SELECT thread_id AS id, status, COALESCE(completed_at, requested_at) AS at, turns
+    `SELECT thread_id AS id, status, COALESCE(completed_at, requested_at) AS at, turns,
+            requested_at AS requestedAt, started_at AS startedAt, completed_at AS completedAt
        FROM (SELECT thread_id, status, completed_at, requested_at,
+                    json_extract(payload_json, '$.startedAt') AS started_at,
                     COUNT(*) OVER (PARTITION BY thread_id) AS turns,
                     ROW_NUMBER() OVER (PARTITION BY thread_id ORDER BY ordinal DESC) AS n
                FROM orchestration_v2_projection_runs
