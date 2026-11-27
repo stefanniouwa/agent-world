@@ -47,6 +47,7 @@ The page sends:
 - `{ type: 'world', world }`, first and on every refresh
 - `{ type: 'home' }` to frame the whole island
 - `{ type: 'focus', id }` to fly to one agent
+- `{ type: 'zone', project }` to clear any selection and fly to that project's zone, far enough back to see all of it. `project` is the zone's name as the world gives it, 1 to 60 characters. A project with no zone on the island is ignored
 - `{ type: 'deselect' }`
 - `{ type: 'sound', on }`
 - `{ type: 'visible', on }`, false while the frame is off screen or the tab is hidden, so the world stops drawing
@@ -55,4 +56,5 @@ The world sends:
 
 - `{ type: 'ready' }` once it can take a world
 - `{ type: 'select', id }`, with `id` null when the selection clears
+- `{ type: 'zones', zones: [{ project, color }] }` after a world goes in, whenever the zones or their colours changed. `color` is the zone's accent on the island as `#rrggbb`, so the page can match it
 - `{ type: 'fatal', reason }` when it cannot draw, so the page shows its still picture

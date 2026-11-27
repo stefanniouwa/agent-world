@@ -13,6 +13,7 @@ import { acceptMessage, outbound } from './messages.js'
 import { worldToThreads } from './wire.js'
 import { islandRadius, shipLayout } from './layout.js'
 import { declutter, easeLift, settleTarget, sweep } from './declutter.js'
+import { zoneDistance, zoneExtent, zoneKey, zoneSummary } from './zones.js'
 
 /**
  * The spectator build: the colony, drawn from a world the framing page sends, and nothing
@@ -249,6 +250,26 @@ async function start() {
     if (notify) post('select', { id: wireId(agent) })
   }
 
+  /** Fly to the middle of a project's zone, far enough back to see all of it. */
+  function showZone(project) {
+    const plot = colony.plots.get(project)
+    if (!plot) return
+    select(null)
+    const { w, h } = engine.viewport || { w: innerWidth, h: innerHeight }
+    const distance = zoneDistance(zoneExtent(plot), { fov: deg(settings.get('fov')), aspect: w / Math.max(1, h), max: homeDistance() })
+    rig.focus(plot.middle, { distance })
+  }
+
+  /** The zones and their accents, posted when either changes, so the page's cards match. */
+  let sentZones = null
+  function postZones() {
+    const zones = zoneSummary(colony.plotOrder)
+    const key = zoneKey(zones)
+    if (key === sentZones) return
+    sentZones = key
+    post('zones', { zones })
+  }
+
   function ndc(e) {
     const rect = engine.canvas.getBoundingClientRect()
     return {
@@ -426,6 +447,7 @@ async function start() {
     )
     colony.setThreads(list, new Set(), new Set(), known)
     for (const t of list) known.add(t.id)
+    postZones()
     if (!framedOnce) {
       framedOnce = true
       home({ snap: true })
@@ -469,6 +491,9 @@ async function start() {
         break
       case 'focus':
         select(data.id, { fly: true })
+        break
+      case 'zone':
+        showZone(data.project)
         break
       case 'deselect':
         select(null)

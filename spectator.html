@@ -73,6 +73,7 @@
     <div class="bar">
       <button id="home">Home</button>
       <button id="focus">Focus next</button>
+      <button id="zone">Next zone</button>
       <button id="deselect">Deselect</button>
       <button id="sound">Sound off</button>
       <button id="visible">Pause drawing</button>
@@ -140,6 +141,12 @@
         const id = agents[focusAt++ % agents.length].id
         log(`-> focus ${id}`)
         send('focus', { id })
+      }
+      let zoneAt = 0
+      document.getElementById('zone').onclick = () => {
+        const project = projects[zoneAt++ % projects.length]
+        log(`-> zone ${project}`)
+        send('zone', { project })
       }
       document.getElementById('sound').onclick = (e) => {
         sound = !sound

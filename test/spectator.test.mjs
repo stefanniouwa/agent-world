@@ -9,6 +9,7 @@ import assert from 'node:assert/strict'
 import { ASLEEP_AGE, toThread, turnsToBytes, worldToThreads } from '../src/spectator/wire.js'
 import { acceptMessage, outbound } from '../src/spectator/messages.js'
 import { shipLayout } from '../src/spectator/layout.js'
+import { ZONE_MIN_DISTANCE, zoneDistance, zoneExtent, zoneKey, zoneSummary } from '../src/spectator/zones.js'
 import { hexDistance } from '../src/world/plot-move.js'
 
 const now = Date.parse('2026-11-27T00:00:00Z')
@@ -132,6 +133,16 @@ test('a message without the source tag, of an unknown type, or malformed is igno
   assert.equal(accept(event({ type: 'world', world: { v: 1 } })), null)
 })
 
+test('a zone message names a project of 1 to 60 characters', () => {
+  assert.equal(accept(event({ type: 'zone', project: 'fleet' })).project, 'fleet')
+  assert.equal(accept(event({ type: 'zone', project: 'x'.repeat(60) })).project.length, 60)
+  assert.equal(accept(event({ type: 'zone', project: 'x'.repeat(61) })), null)
+  assert.equal(accept(event({ type: 'zone', project: '' })), null)
+  assert.equal(accept(event({ type: 'zone' })), null)
+  assert.equal(accept(event({ type: 'zone', project: 7 })), null)
+  assert.equal(accept(event({ type: 'zone', project: ['fleet'] })), null)
+})
+
 test('outgoing messages carry the source tag and cannot be retyped by their fields', () => {
   assert.deepEqual(outbound('select', { id: null }), { id: null, source: 'agent-world', type: 'select' })
   assert.equal(outbound('ready', { type: 'fatal', source: 'x' }).type, 'ready')
@@ -236,4 +247,41 @@ test('a badge pacing back and forth ends up with one steady box over its path', 
   assert.ok(Math.min(...boxes.map((b) => b.x0)) <= 81 && Math.max(...boxes.map((b) => b.x1)) >= 119, 'covers the path')
   const spread = Math.max(...boxes.map((b) => b.x0)) - Math.min(...boxes.map((b) => b.x0))
   assert.ok(spread < 7, `the box barely moves once settled (${spread.toFixed(2)}px)`)
+})
+
+// ── zones ───────────────────────────────────────────────────────────────────────────────
+
+const plot = (id, accent, cells = [{ x: 0, z: 0 }]) => ({
+  id,
+  accent,
+  center: { x: 10, z: 5 },
+  localCenters: cells,
+  middle: { x: 10 + cells.reduce((s, c) => s + c.x, 0) / cells.length, z: 5 + cells.reduce((s, c) => s + c.z, 0) / cells.length },
+})
+
+test('each zone goes to the page with its accent as a six digit hex colour', () => {
+  assert.deepEqual(zoneSummary([plot('fleet', 0x4f9a63), plot('Private work', 0x0000ff)]), [
+    { project: 'fleet', color: '#4f9a63' },
+    { project: 'Private work', color: '#0000ff' },
+  ])
+})
+
+test('the zones key changes with the list and with any colour, and only then', () => {
+  const a = zoneSummary([plot('fleet', 0x4f9a63), plot('lab', 0xc96442)])
+  assert.equal(zoneKey(a), zoneKey(zoneSummary([plot('fleet', 0x4f9a63), plot('lab', 0xc96442)])))
+  assert.notEqual(zoneKey(a), zoneKey(zoneSummary([plot('fleet', 0x4f9a63)])))
+  assert.notEqual(zoneKey(a), zoneKey(zoneSummary([plot('fleet', 0x4f9a63), plot('lab', 0x4f7ec9)])))
+})
+
+test('a zone is framed from further back than a bot, and a bigger zone from further still', () => {
+  const lens = { fov: (38 * Math.PI) / 180, aspect: 16 / 9 }
+  const small = zoneDistance(zoneExtent(plot('a', 0)), lens)
+  const step = 7.6 * Math.sqrt(3)
+  const big = zoneDistance(zoneExtent(plot('b', 0, [{ x: 0, z: 0 }, { x: step, z: 0 }, { x: 0, z: step }, { x: step, z: step }])), lens)
+  assert.ok(small >= ZONE_MIN_DISTANCE && small > 28)
+  assert.ok(big > small)
+  // A portrait frame needs to stand further back for the same zone.
+  assert.ok(zoneDistance(20, { ...lens, aspect: 9 / 16 }) > zoneDistance(20, lens))
+  // Never further than the whole island needs.
+  assert.equal(zoneDistance(200, { ...lens, max: 90 }), 90)
 })
