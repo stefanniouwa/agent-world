@@ -58,5 +58,6 @@ The world sends:
 
 - `{ type: 'ready' }` once it can take a world
 - `{ type: 'select', id }`, with `id` null when the selection clears
+- `{ type: 'anchor', id, x, y, visible }` while a bot is selected, so the page can float something over it. `id` is the same id `select` sends. `x` and `y` are CSS pixels inside the frame, y down, at the crown of the bot's helmet, where the bottom edge of its status badge sits. `visible` is false when that point is behind the camera, where `x` and `y` are null, or more than 8 pixels outside the frame. One goes out on every selection, then one each frame the point moves half a pixel or more or `visible` changes, and none while the world is paused. When the selection clears, one `{ type: 'anchor', id: null }`
 - `{ type: 'zones', zones: [{ project, color }] }` after a world goes in, whenever the zones or their colours changed. `color` is the zone's accent on the island as `#rrggbb`, so the page can match it
 - `{ type: 'fatal', reason }` when it cannot draw, so the page shows its still picture

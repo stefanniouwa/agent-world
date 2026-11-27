@@ -15,6 +15,8 @@ import { worldToThreads } from './wire.js'
 import { islandRadius, shipLayout } from './layout.js'
 import { declutter, easeLift, settleTarget, sweep } from './declutter.js'
 import { zoneDistance, zoneExtent, zoneKey, zoneSummary } from './zones.js'
+import { anchorMoved, viewToCss } from './anchor.js'
+import { HEAD_CLEAR } from '../agents/indicators.js'
 
 /**
  * The spectator build: the colony, drawn from a world the framing page sends, and nothing
@@ -247,6 +249,8 @@ async function start() {
   // ── selection ───────────────────────────────────────────────────────────────────────
 
   let selectedId = null
+  /** The last `anchor` message sent, so the loop only sends one when something changed. */
+  let sentAnchor = null
 
   /** The id the page knows: an errand answers for the thread that sent it. */
   const wireId = (agent) => agent?.thread?.parentId || agent?.id || null
@@ -263,6 +267,8 @@ async function start() {
       return
     }
     selectedId = agent.id
+    // Every selection sends its anchor afresh on the next frame, even the same bot again.
+    sentAnchor = null
     following = true
     colony.astronauts.setSelected(agent)
     if (fly) rig.focus(new THREE.Vector3(agent.pos.x, 0, agent.pos.z), { distance: Math.min(rig.desiredDistance, 28) })
@@ -419,6 +425,31 @@ async function start() {
     return rects
   }
   let shownBadges = []
+
+  /**
+   * Where the selected bot's head is on screen, for the page's speech bubble: a point at the
+   * crown of the helmet, where the status badge's bottom edge sits, bent like the ground and
+   * projected the way the plates are. Sent when it moves half a pixel or more, when it goes
+   * on or off screen, and once as `id: null` when the selection clears. The loop only runs
+   * while the world is drawing, so nothing goes out while it is paused.
+   */
+  function postAnchor() {
+    const agent = selectedId ? colony.agentFor(selectedId) : null
+    if (!agent) {
+      if (sentAnchor && sentAnchor.id !== null) {
+        sentAnchor = { id: null }
+        post('anchor', { id: null })
+      }
+      return
+    }
+    const { w, h } = engine.viewport || { w: innerWidth, h: innerHeight }
+    const lift = HEAD_CLEAR * (agent.scale ?? 1)
+    const view = bendPoint(anchor.set(agent.pos.x, agent.pos.y + lift, agent.pos.z)).applyMatrix4(engine.camera.matrixWorldInverse)
+    const next = { id: wireId(agent), ...viewToCss(view, engine.camera.projectionMatrix.elements, w, h) }
+    if (!anchorMoved(sentAnchor, next)) return
+    sentAnchor = next
+    post('anchor', next)
+  }
   /** Each badge's swept box, by agent id; see `sweep`. */
   const sweeps = new Map()
   const lastView = new Float32Array(16)
@@ -575,12 +606,13 @@ async function start() {
       engine.setFocusDistance(rig.distance)
       declutterPlates(dt)
       if (selectedId && !colony.agentFor(selectedId)) select(null, { notify: true })
+      postAnchor()
       ambience.update(dt, engine.camera, soundWorld())
     },
   })
 
   // For poking at the world from a dev console and the visual checks. Not in the build.
-  if (import.meta.env.DEV) window.agentWorld = { engine, rig, colony, settings, select, plates: () => shownPlates, badges: () => shownBadges }
+  if (import.meta.env.DEV) window.agentWorld = { engine, rig, colony, settings, select, plates: () => shownPlates, badges: () => shownBadges, anchor: () => sentAnchor }
 
   // The rest of boot, one short task at a time: models, the ground, the grass, the shaders,
   // and then the first frame. Only after that frame is the world ready.

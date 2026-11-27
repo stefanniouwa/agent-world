@@ -304,3 +304,57 @@ test('a zone is framed from further back than a bot, and a bigger zone from furt
   // Never further than the whole island needs.
   assert.equal(zoneDistance(200, { ...lens, max: 90 }), 90)
 })
+
+import { ANCHOR_MARGIN, anchorMoved, viewToCss } from '../src/spectator/anchor.js'
+
+// A 60 degree lens on a 2:1 frame: p[5] is 1 / tan(30deg), p[0] that over the aspect.
+const lens = (() => {
+  const f = 1 / Math.tan(Math.PI / 6)
+  const p = new Array(16).fill(0)
+  p[0] = f / 2
+  p[5] = f
+  return p
+})()
+
+test('a point straight ahead lands in the middle of the frame, y down', () => {
+  assert.deepEqual(viewToCss({ x: 0, y: 0, z: -10 }, lens, 800, 400), { x: 400, y: 200, visible: true })
+  const up = viewToCss({ x: 0, y: 1, z: -10 }, lens, 800, 400)
+  assert.ok(up.y < 200)
+  const right = viewToCss({ x: 1, y: 0, z: -10 }, lens, 800, 400)
+  assert.ok(right.x > 400)
+  // The edge of the lens is the edge of the frame.
+  const top = viewToCss({ x: 0, y: 10 * Math.tan(Math.PI / 6), z: -10 }, lens, 800, 400)
+  assert.equal(top.y, 0)
+  assert.equal(top.visible, true)
+})
+
+test('a point behind the camera or well off the frame is not visible', () => {
+  assert.deepEqual(viewToCss({ x: 0, y: 0, z: 5 }, lens, 800, 400), { x: null, y: null, visible: false })
+  assert.equal(viewToCss({ x: 0, y: 0, z: 0 }, lens, 800, 400).visible, false)
+  const past = viewToCss({ x: 0, y: 20, z: -10 }, lens, 800, 400)
+  assert.equal(past.visible, false)
+  assert.ok(past.y < -ANCHOR_MARGIN)
+})
+
+test('a point just past the edge still counts, within the margin', () => {
+  // One pixel above the frame.
+  const y = (10 * Math.tan(Math.PI / 6) * (200 + 1)) / 200
+  const near = viewToCss({ x: 0, y, z: -10 }, lens, 800, 400)
+  assert.equal(near.y, -1)
+  assert.equal(near.visible, true)
+})
+
+test('the anchor goes out again only on a half pixel move, another bot or a change in view', () => {
+  const last = { id: 'a', x: 100, y: 50, visible: true }
+  assert.equal(anchorMoved(null, last), true)
+  assert.equal(anchorMoved(last, { ...last }), false)
+  assert.equal(anchorMoved(last, { ...last, x: 100.4 }), false)
+  assert.equal(anchorMoved(last, { ...last, y: 49.6 }), false)
+  assert.equal(anchorMoved(last, { ...last, x: 100.5 }), true)
+  assert.equal(anchorMoved(last, { ...last, y: 49.5 }), true)
+  assert.equal(anchorMoved(last, { ...last, visible: false }), true)
+  assert.equal(anchorMoved(last, { ...last, id: 'b' }), true)
+  const behind = { id: 'a', x: null, y: null, visible: false }
+  assert.equal(anchorMoved(behind, { ...behind }), false)
+  assert.equal(anchorMoved(behind, { id: 'a', x: 10, y: 10, visible: false }), true)
+})
